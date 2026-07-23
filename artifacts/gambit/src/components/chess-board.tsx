@@ -9,12 +9,12 @@ import { Chess, Move, Square, Color } from 'chess.js';
 import { GambitState } from '@/hooks/gambit-engine';
 import { ChessPiece } from './chess-pieces';
 
-// Raw wood board — warm cream / dark espresso
-const SQ_LIGHT      = '#d9cfbf';
-const SQ_DARK       = '#4a3525';
+// Purple-tinted board with lavender + deep violet
+const SQ_LIGHT      = '#d4c9e8';
+const SQ_DARK       = '#3d2060';
 
-const COORD_LIGHT   = '#4a3525';
-const COORD_DARK    = '#d9cfbf';
+const COORD_LIGHT   = '#3d2060';
+const COORD_DARK    = '#d4c9e8';
 
 interface ChessBoardProps {
   chess: Chess;

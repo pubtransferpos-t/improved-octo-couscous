@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { Color } from 'chess.js';
 import { EFFECTS, EffectType } from '@/hooks/gambit-engine';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface SpinWheelProps {
   spinningFor: Color;
@@ -10,18 +8,24 @@ interface SpinWheelProps {
   onEffect: (effect: EffectType) => void;
 }
 
+const NEONS = ['#ff2d78','#ff9900','#ffee00','#39ff14','#00f5ff','#bf5fff'];
+
 export default function SpinWheel({ spinningFor, enabledEffects, onEffect }: SpinWheelProps) {
   const [spinning, setSpinning] = useState(false);
   const [chosen, setChosen] = useState<EffectType | null>(null);
   const [displayIdx, setDisplayIdx] = useState(0);
+  const [colorIdx, setColorIdx] = useState(0);
+  const [spinCount, setSpinCount] = useState(0);
 
-  const playerLabel = spinningFor === 'w' ? 'White' : 'Black';
+  const playerLabel = spinningFor === 'w' ? 'WHITE' : 'BLACK';
   const displayEffect = chosen ?? enabledEffects[displayIdx] ?? null;
   const effectDef = displayEffect ? EFFECTS[displayEffect] : null;
+  const isBuff = effectDef?.category === 'buff';
 
   const spin = () => {
     if (spinning || chosen) return;
     setSpinning(true);
+    setSpinCount(c => c + 1);
 
     const totalFrames = 28 + Math.floor(Math.random() * 16);
     let frame = 0;
@@ -29,6 +33,7 @@ export default function SpinWheel({ spinningFor, enabledEffects, onEffect }: Spi
 
     const iv = setInterval(() => {
       setDisplayIdx(i => (i + 1) % enabledEffects.length);
+      setColorIdx(c => (c + 1) % NEONS.length);
       frame++;
       if (frame >= totalFrames) {
         clearInterval(iv);
@@ -40,76 +45,180 @@ export default function SpinWheel({ spinningFor, enabledEffects, onEffect }: Spi
     }, 70);
   };
 
+  const currentColor = chosen
+    ? (isBuff ? '#39ff14' : '#ff2d78')
+    : spinning
+      ? NEONS[colorIdx]
+      : '#bf5fff';
+
   return (
-    <Dialog open>
-      <DialogContent
-        className="bg-gray-900 border-gray-700 text-white max-w-sm"
-        // Prevent close without applying
-        onInteractOutside={e => e.preventDefault()}
-        onEscapeKeyDown={e => e.preventDefault()}
-      >
-        <DialogHeader>
-          <DialogTitle className="text-center text-amber-400 text-lg">
-            🎰 {playerLabel}'s Spin!
-          </DialogTitle>
-        </DialogHeader>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 50,
+      background: 'rgba(0,0,0,0.88)',
+      backdropFilter: 'blur(10px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div className="animate-bounce-in" style={{
+        width: '100%', maxWidth: 380, margin: '0 16px',
+        textAlign: 'center',
+        position: 'relative',
+      }}>
+        {/* Spinning decorative ring */}
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 420, height: 420,
+          borderRadius: '50%',
+          border: `3px dashed ${currentColor}44`,
+          pointerEvents: 'none',
+          transition: 'border-color 0.1s',
+        }} className="animate-spin-slow" />
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 460, height: 460,
+          borderRadius: '50%',
+          border: `2px dashed ${currentColor}22`,
+          pointerEvents: 'none',
+        }} className="animate-spin-rev" />
 
-        <div className="flex flex-col items-center gap-5 py-2">
-          {/* Effect display box */}
-          <div
-            className={`w-full rounded-xl p-5 text-center border-2 transition-all duration-200 ${
-              chosen
-                ? effectDef?.category === 'buff'
-                  ? 'border-green-500 bg-green-950'
-                  : 'border-red-500 bg-red-950'
-                : spinning
-                  ? 'border-amber-400 bg-gray-800 animate-pulse'
-                  : 'border-gray-600 bg-gray-800'
-            }`}
-          >
-            {effectDef ? (
-              <>
-                <div
-                  className={`text-2xl font-bold ${
-                    effectDef.category === 'buff' ? 'text-green-400' : 'text-red-400'
-                  }`}
-                >
-                  {effectDef.label}
-                </div>
-                <div className="text-xs text-gray-400 mt-1">
-                  {effectDef.category === 'buff' ? '⬆ BUFF' : '⬇ NERF'}
-                </div>
-                {chosen && (
-                  <div className="text-sm text-gray-300 mt-2">{effectDef.description}</div>
-                )}
-              </>
-            ) : (
-              <div className="text-gray-500">Ready to spin…</div>
-            )}
+        {/* Header */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{
+            fontFamily: '"Press Start 2P", monospace',
+            fontSize: '0.6rem', letterSpacing: '0.15em',
+            color: 'rgba(200,190,255,0.5)',
+            marginBottom: 8,
+          }}>
+            🎰 IT&apos;S SPIN TIME
           </div>
+          <div style={{
+            fontFamily: '"Permanent Marker", cursive',
+            fontSize: '2.2rem',
+            color: spinningFor === 'w' ? '#ffee00' : '#00f5ff',
+            filter: `drop-shadow(0 0 15px ${spinningFor === 'w' ? '#ffee00' : '#00f5ff'}88)`,
+          }}>
+            {playerLabel}
+          </div>
+        </div>
 
-          {!chosen ? (
-            <Button
-              onClick={spin}
-              disabled={spinning}
-              className="w-full h-12 bg-amber-400 hover:bg-amber-300 text-gray-900 font-bold text-lg"
-            >
-              {spinning ? 'Spinning…' : 'SPIN!'}
-            </Button>
+        {/* Effect display box */}
+        <div
+          onClick={!spinning && !chosen ? spin : undefined}
+          style={{
+            padding: '32px 24px',
+            borderRadius: 20,
+            border: `3px solid ${currentColor}`,
+            background: `${currentColor}10`,
+            cursor: !spinning && !chosen ? 'pointer' : 'default',
+            marginBottom: 20,
+            boxShadow: `0 0 40px ${currentColor}44, inset 0 0 40px ${currentColor}08`,
+            transition: 'all 0.15s',
+            minHeight: 140,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            position: 'relative', overflow: 'hidden',
+          }}
+        >
+          {/* Spinning slot machine stripes when spinning */}
+          {spinning && (
+            <div style={{
+              position: 'absolute', inset: 0, overflow: 'hidden',
+              opacity: 0.07, pointerEvents: 'none',
+            }}>
+              {[...Array(8)].map((_, i) => (
+                <div key={i} style={{
+                  position: 'absolute', left: 0, right: 0,
+                  height: '12.5%', top: `${i * 12.5}%`,
+                  background: i % 2 === 0 ? '#fff' : 'transparent',
+                }} />
+              ))}
+            </div>
+          )}
+
+          {effectDef ? (
+            <>
+              <div style={{
+                fontFamily: '"Permanent Marker", cursive',
+                fontSize: '1.8rem',
+                color: currentColor,
+                filter: `drop-shadow(0 0 10px ${currentColor})`,
+                marginBottom: 6,
+                transition: spinning ? 'none' : 'all 0.2s',
+              }}>
+                {effectDef.label}
+              </div>
+              <div style={{
+                fontFamily: '"Press Start 2P", monospace', fontSize: '0.55rem',
+                letterSpacing: '0.1em',
+                color: isBuff ? '#39ff14' : '#ff2d78',
+                marginBottom: chosen ? 12 : 0,
+              }}>
+                {isBuff ? '⬆ BUFF' : '⬇ NERF'}
+              </div>
+              {chosen && (
+                <div style={{
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.95rem',
+                  color: 'rgba(200,190,255,0.7)', lineHeight: 1.5,
+                  marginTop: 8,
+                }} className="animate-slide-up">
+                  {effectDef.description}
+                </div>
+              )}
+            </>
           ) : (
-            <Button
-              onClick={() => onEffect(chosen)}
-              className={`w-full h-12 font-bold text-base ${
-                effectDef?.category === 'buff'
-                  ? 'bg-green-600 hover:bg-green-500 text-white'
-                  : 'bg-red-600 hover:bg-red-500 text-white'
-              }`}
-            >
-              Apply: {effectDef?.label}
-            </Button>
+            <div style={{
+              fontFamily: '"Permanent Marker", cursive', fontSize: '1.4rem',
+              color: 'rgba(200,190,255,0.4)',
+            }}>
+              Ready...
+            </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+
+        {/* Buttons */}
+        {!chosen ? (
+          <button
+            onClick={spin}
+            disabled={spinning}
+            style={{
+              width: '100%', padding: '18px 0',
+              fontFamily: '"Permanent Marker", cursive',
+              fontSize: '2rem', letterSpacing: '0.06em',
+              background: spinning
+                ? 'rgba(200,190,255,0.1)'
+                : `linear-gradient(135deg, #ff2d78, #ff9900, #ffee00)`,
+              color: spinning ? 'rgba(200,190,255,0.5)' : '#fff',
+              border: spinning ? '2px solid rgba(200,190,255,0.2)' : 'none',
+              borderRadius: 18,
+              cursor: spinning ? 'not-allowed' : 'pointer',
+              boxShadow: spinning ? 'none' : '0 0 30px rgba(255,45,120,0.5), 0 8px 24px rgba(0,0,0,0.4)',
+              animation: spinning ? 'none' : `wiggle-btn ${spinCount > 0 ? '0s' : '2s'} ease-in-out ${spinCount > 0 ? '' : 'infinite'}`,
+              transition: 'all 0.15s',
+            }}
+          >
+            {spinning ? '🌀 Spinning...' : '🎰 SPIN!'}
+          </button>
+        ) : (
+          <button
+            onClick={() => onEffect(chosen)}
+            style={{
+              width: '100%', padding: '18px 0',
+              fontFamily: '"Permanent Marker", cursive',
+              fontSize: '1.6rem', letterSpacing: '0.04em',
+              background: isBuff
+                ? 'linear-gradient(135deg, #39ff14, #00d4aa)'
+                : 'linear-gradient(135deg, #ff2d78, #ff6b00)',
+              color: '#fff', border: 'none', borderRadius: 18,
+              cursor: 'pointer',
+              boxShadow: `0 0 30px ${isBuff ? 'rgba(57,255,20,0.4)' : 'rgba(255,45,120,0.4)'}, 0 8px 24px rgba(0,0,0,0.4)`,
+              animation: 'bob 1s ease-in-out infinite',
+            }}
+          >
+            {isBuff ? '✨' : '💥'} Apply: {effectDef?.label}!
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

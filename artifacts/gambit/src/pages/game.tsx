@@ -11,19 +11,6 @@ const PIECE_SYMBOLS: Record<PieceSymbol, string> = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
 
-const C = {
-  bg:      '#0d0d0d',
-  surface: '#131313',
-  border:  '#272727',
-  red:     '#f72f22',
-  yellow:  '#ffd600',
-  text:    '#ede9e2',
-  sub:     '#777',
-  dim:     '#3a3a3a',
-  green:   '#21d47e',
-  nerf:    '#f72f22',
-} as const;
-
 export default function Game() {
   const [, setLocation] = useLocation();
 
@@ -43,17 +30,9 @@ export default function Game() {
   const botScheduled = useRef(false);
 
   const {
-    state,
-    chess,
-    pendingSpin,
-    setPendingSpin,
-    gameOver,
-    makeMove,
-    getLegalMoves,
-    initiateEffect,
-    effectTargeting,
-    setEffectTargeting,
-    handleTargetClick,
+    state, chess, pendingSpin, setPendingSpin,
+    gameOver, makeMove, getLegalMoves,
+    initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
   } = useGambitGame(settings);
 
   // ── Bot AI ────────────────────────────────────────────────────────────────
@@ -65,64 +44,37 @@ export default function Game() {
     if (effectTargeting !== null) { console.log('[bot-effect] skip: effectTargeting active'); return; }
     if (botScheduled.current) { console.log('[bot-effect] skip: already scheduled'); return; }
 
-    console.log('[bot-effect] scheduling bot move, turn:', state.turn, 'fen:', state.fen);
     botScheduled.current = true;
     setBotThinking(true);
-
     const filteredMoves = getLegalMoves();
-    console.log('[bot-effect] effect-filtered legal moves:', filteredMoves.length, filteredMoves.map(m => `${m.from}-${m.to}`));
 
     const timer = setTimeout(async () => {
-      console.log('[bot-effect] timeout fired, calling getBotMove');
       const { getBotMove } = await import('@/lib/bot');
       const move = getBotMove(state.fen, settings.botElo, filteredMoves);
-      console.log('[bot-effect] getBotMove returned:', move);
-      if (move) {
-        const result = makeMove({ from: move.from, to: move.to, promotion: move.promotion });
-        console.log('[bot-effect] makeMove result:', result);
-      } else {
-        console.warn('[bot-effect] getBotMove returned null — no move made');
-      }
+      if (move) makeMove({ from: move.from, to: move.to, promotion: move.promotion });
       setBotThinking(false);
       botScheduled.current = false;
     }, 450);
-    return () => {
-      clearTimeout(timer);
-      botScheduled.current = false;
-    };
+    return () => { clearTimeout(timer); botScheduled.current = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.turn, state.fen, gameOver.isOver, pendingSpin, effectTargeting]);
 
   // ── Bot auto-spin ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (settings.mode !== 'bot') return;
-    if (pendingSpin === null) return;
-    if (pendingSpin === playerColor) return;
+    if (settings.mode !== 'bot' || pendingSpin === null || pendingSpin === playerColor) return;
     const timer = setTimeout(() => {
       const pool = settings.enabledEffects;
-      if (pool.length > 0) {
-        const effect = pool[Math.floor(Math.random() * pool.length)];
-        initiateEffect(effect, pendingSpin);
-      }
+      if (pool.length > 0) initiateEffect(pool[Math.floor(Math.random() * pool.length)], pendingSpin);
       setPendingSpin(null);
     }, 700);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSpin]);
 
-  // ── Clear selection on turn change ────────────────────────────────────────
-  useEffect(() => {
-    setSelectedSquare(null);
-    setLegalMoves([]);
-  }, [state.turn]);
+  useEffect(() => { setSelectedSquare(null); setLegalMoves([]); }, [state.turn]);
 
-  // ── Square click ──────────────────────────────────────────────────────────
   const handleSquareClick = useCallback((sq: Square) => {
-    if (effectTargeting) {
-      handleTargetClick(sq);
-      return;
-    }
-
+    if (effectTargeting) { handleTargetClick(sq); return; }
     if (settings.mode === 'bot' && state.turn !== playerColor) return;
 
     if (selectedSquare) {
@@ -131,9 +83,7 @@ export default function Game() {
         const piece = chess.get(selectedSquare);
         const promo = piece?.type === 'p' && (sq[1] === '8' || sq[1] === '1') ? 'q' : undefined;
         makeMove({ from: selectedSquare, to: sq, promotion: promo });
-        setSelectedSquare(null);
-        setLegalMoves([]);
-        return;
+        setSelectedSquare(null); setLegalMoves([]); return;
       }
     }
 
@@ -144,71 +94,70 @@ export default function Game() {
         : piece?.color === playerColor && piece.color === state.turn;
 
     if (canControl) {
-      if (selectedSquare === sq) {
-        setSelectedSquare(null);
-        setLegalMoves([]);
-      } else {
-        setSelectedSquare(sq);
-        setLegalMoves(getLegalMoves(sq));
-      }
-    } else {
-      setSelectedSquare(null);
-      setLegalMoves([]);
-    }
-  }, [
-    effectTargeting, handleTargetClick, selectedSquare, legalMoves, chess,
-    state.turn, makeMove, getLegalMoves, settings.mode, playerColor,
-  ]);
+      if (selectedSquare === sq) { setSelectedSquare(null); setLegalMoves([]); }
+      else { setSelectedSquare(sq); setLegalMoves(getLegalMoves(sq)); }
+    } else { setSelectedSquare(null); setLegalMoves([]); }
+  }, [effectTargeting, handleTargetClick, selectedSquare, legalMoves, chess, state.turn, makeMove, getLegalMoves, settings.mode, playerColor]);
 
   const boardOrientation: Color | null =
     settings.mode === 'pass-and-play' || settings.mode === 'custom' ? null : playerColor;
 
-  const modeLabel = settings.mode === 'pass-and-play' ? 'same screen'
-    : settings.mode === 'bot' ? 'vs computer'
-    : settings.mode === 'custom' ? 'custom'
-    : 'online';
-
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, display: 'flex', flexDirection: 'column', fontFamily: '"DM Sans", sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: '#0d0a1a', color: '#f0f0ff', display: 'flex', flexDirection: 'column', fontFamily: '"Boogaloo", sans-serif' }}>
 
-      {/* Top accent bar */}
-      <div style={{ height: 3, background: C.red, flexShrink: 0 }} />
+      {/* Rainbow top bar */}
+      <div style={{
+        height: 5, flexShrink: 0,
+        background: 'linear-gradient(90deg, #ff2d78, #ff9900, #ffee00, #39ff14, #00f5ff, #bf5fff, #ff2d78)',
+        backgroundSize: '200% 100%',
+        animation: 'rainbow 3s linear infinite',
+      }} />
 
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 16px', height: 44, borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+        padding: '0 16px', height: 50,
+        borderBottom: '1px solid rgba(191,95,255,0.2)',
+        flexShrink: 0,
+        background: 'rgba(0,0,0,0.3)',
+        backdropFilter: 'blur(8px)',
       }}>
         <button
           onClick={() => setLocation('/')}
           style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontFamily: '"DM Sans", sans-serif', fontWeight: 700, fontSize: '0.75rem',
-            letterSpacing: '0.06em', textTransform: 'uppercase',
-            color: C.sub, padding: '4px 0',
+            background: 'rgba(255,45,120,0.15)', border: '1px solid rgba(255,45,120,0.4)',
+            borderRadius: 8, cursor: 'pointer',
+            fontFamily: '"Boogaloo", sans-serif', fontWeight: 400, fontSize: '1rem',
+            color: '#ff2d78', padding: '4px 12px',
+            transition: 'all 0.15s',
           }}
         >
           ← Back
         </button>
         <span style={{
-          fontFamily: '"Anton", impact, sans-serif', fontSize: '1.3rem',
-          letterSpacing: '0.08em', color: C.text,
+          fontFamily: '"Permanent Marker", cursive',
+          fontSize: '1.5rem',
+          background: 'linear-gradient(135deg, #ff2d78, #ff9900, #ffee00)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+          filter: 'drop-shadow(0 0 10px rgba(255,45,120,0.5))',
         }}>
-          GAMBIT
+          Gambit
         </span>
         <span style={{
-          fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem',
-          fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-          color: C.dim, width: 72, textAlign: 'right',
+          fontFamily: '"Press Start 2P", monospace', fontSize: '0.42rem',
+          color: 'rgba(200,190,255,0.35)', letterSpacing: '0.08em',
+          textTransform: 'uppercase', width: 72, textAlign: 'right',
         }}>
-          {modeLabel}
+          {settings.mode.replace('-', ' ')}
         </span>
       </div>
 
       {/* Game layout */}
       <div style={{
         flex: 1, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12,
+        alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12,
       }}>
         <PlayerBar
           color="b"
@@ -236,36 +185,31 @@ export default function Game() {
       </div>
 
       {/* Spin wheel */}
-      {pendingSpin !== null &&
-        (settings.mode !== 'bot' || pendingSpin === playerColor) && (
-          <SpinWheel
-            spinningFor={pendingSpin}
-            enabledEffects={settings.enabledEffects}
-            onEffect={effect => {
-              initiateEffect(effect, pendingSpin);
-              setPendingSpin(null);
-            }}
-          />
-        )}
+      {pendingSpin !== null && (settings.mode !== 'bot' || pendingSpin === playerColor) && (
+        <SpinWheel
+          spinningFor={pendingSpin}
+          enabledEffects={settings.enabledEffects}
+          onEffect={effect => { initiateEffect(effect, pendingSpin); setPendingSpin(null); }}
+        />
+      )}
 
       {/* Effect targeting banner */}
       {effectTargeting && (
         <div style={{ position: 'fixed', bottom: 16, left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 40, pointerEvents: 'none' }}>
           <div style={{
-            background: C.red, color: '#fff',
-            padding: '10px 20px',
-            fontFamily: '"DM Sans", sans-serif', fontWeight: 700, fontSize: '0.85rem',
+            background: 'linear-gradient(135deg, #ff2d78, #ff9900)',
+            color: '#fff', padding: '12px 24px', borderRadius: 50,
+            fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
             display: 'flex', alignItems: 'center', gap: 12,
             pointerEvents: 'auto',
-            borderRadius: 0,
+            boxShadow: '0 0 30px rgba(255,45,120,0.5), 0 8px 24px rgba(0,0,0,0.4)',
+            animation: 'bob 1.5s ease-in-out infinite',
           }}>
-            <span>🎯 Select target for <strong>{EFFECTS[effectTargeting.effect as EffectType]?.label}</strong></span>
+            <span>🎯 Pick a target for <strong>{EFFECTS[effectTargeting.effect as EffectType]?.label}</strong></span>
             <button
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 900, fontSize: '1rem' }}
+              style={{ background: 'rgba(0,0,0,0.25)', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#fff', fontWeight: 900, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               onClick={() => setEffectTargeting(null)}
-            >
-              ✕
-            </button>
+            >✕</button>
           </div>
         </div>
       )}
@@ -274,56 +218,71 @@ export default function Game() {
       {gameOver.isOver && (
         <div style={{
           position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.88)',
+          background: 'rgba(0,0,0,0.85)',
+          backdropFilter: 'blur(8px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
         }}>
-          <div style={{
-            background: C.surface,
-            borderTop: `3px solid ${C.red}`,
+          <div className="animate-bounce-in" style={{
+            background: 'linear-gradient(145deg, #14102a, #1a1230)',
+            border: '3px solid transparent',
+            backgroundClip: 'padding-box',
+            position: 'relative',
             padding: '40px 36px',
-            width: '100%', maxWidth: 340, margin: '0 16px',
-            textAlign: 'center',
+            width: '100%', maxWidth: 360, margin: '0 16px',
+            textAlign: 'center', borderRadius: 24,
+            boxShadow: '0 0 60px rgba(255,45,120,0.3), 0 20px 60px rgba(0,0,0,0.6)',
           }}>
-            <div style={{ fontSize: '3.5rem', lineHeight: 1, marginBottom: 12 }}>
+            {/* Rainbow border trick */}
+            <div style={{
+              position: 'absolute', inset: -3, borderRadius: 26, zIndex: -1,
+              background: 'linear-gradient(135deg, #ff2d78, #ff9900, #ffee00, #39ff14, #00f5ff, #bf5fff)',
+              animation: 'rainbow 3s linear infinite',
+            }} />
+
+            <div style={{ fontSize: '4rem', marginBottom: 8 }} className="animate-bob">
               {gameOver.result?.includes('checkmate') || gameOver.result?.includes('won')
                 ? gameOver.result?.includes('White') ? '♔' : '♚'
-                : '½'}
+                : '🤝'}
             </div>
             <h2 style={{
-              fontFamily: '"Anton", impact, sans-serif',
-              fontSize: '2.2rem', letterSpacing: '0.06em',
-              color: C.red, margin: '0 0 8px',
-              textTransform: 'uppercase',
+              fontFamily: '"Permanent Marker", cursive',
+              fontSize: '2.8rem',
+              background: 'linear-gradient(135deg, #ff2d78, #ff9900)',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+              margin: '0 0 8px',
             }}>
-              Game Over
+              Game Over!
             </h2>
-            <p style={{ fontSize: '0.88rem', color: C.sub, marginBottom: 28, lineHeight: 1.5 }}>
+            <p style={{ fontSize: '1rem', fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.7)', marginBottom: 28 }}>
               {gameOver.result}
             </p>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={() => window.location.reload()}
                 style={{
-                  flex: 1, padding: '13px 0',
-                  fontFamily: '"Anton", impact, sans-serif',
-                  fontSize: '1.1rem', letterSpacing: '0.08em', textTransform: 'uppercase',
-                  background: C.red, color: '#fff',
-                  border: 'none', borderRadius: 0, cursor: 'pointer',
+                  flex: 1, padding: '14px 0',
+                  fontFamily: '"Permanent Marker", cursive', fontSize: '1.4rem',
+                  background: 'linear-gradient(135deg, #ff2d78, #ff9900)',
+                  color: '#fff', border: 'none', borderRadius: 14,
+                  cursor: 'pointer',
+                  boxShadow: '0 0 20px rgba(255,45,120,0.4)',
+                  transition: 'transform 0.15s',
                 }}
               >
-                Again
+                Again! 🎲
               </button>
               <button
                 onClick={() => setLocation('/')}
                 style={{
-                  flex: 1, padding: '13px 0',
-                  fontFamily: '"Anton", impact, sans-serif',
-                  fontSize: '1.1rem', letterSpacing: '0.08em', textTransform: 'uppercase',
-                  background: 'transparent', color: C.sub,
-                  border: `1px solid ${C.border}`, borderRadius: 0, cursor: 'pointer',
+                  flex: 1, padding: '14px 0',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1.2rem',
+                  background: 'rgba(191,95,255,0.15)',
+                  color: '#bf5fff', border: '2px solid rgba(191,95,255,0.4)',
+                  borderRadius: 14, cursor: 'pointer',
+                  transition: 'transform 0.15s',
                 }}
               >
-                Menu
+                🏠 Menu
               </button>
             </div>
           </div>
@@ -335,59 +294,66 @@ export default function Game() {
 
 /* ── Player HUD ─────────────────────────────────────────────────────────── */
 
-function PlayerBar({
-  color, state, isActive, botThinking,
-}: {
-  color: Color;
-  state: GambitState;
-  isActive: boolean;
-  botThinking: boolean;
+const PLAYER_COLORS = { w: '#ffee00', b: '#00f5ff' };
+
+function PlayerBar({ color, state, isActive, botThinking }: {
+  color: Color; state: GambitState; isActive: boolean; botThinking: boolean;
 }) {
   const effects = state.activeEffects[color];
   const captured = state.capturedPieces.filter(p => p.color !== color);
   const movesLeft = state.spinProgress[color];
-  const spinMax = 5; // approximate for bar width
+  const pc = PLAYER_COLORS[color];
 
   return (
     <div style={{
       width: '100%', maxWidth: 520,
-      background: isActive ? 'rgba(247,47,34,0.05)' : C.surface,
-      border: `1px solid ${isActive ? C.red : C.border}`,
-      borderLeft: `3px solid ${isActive ? C.red : C.border}`,
-      padding: '10px 12px',
-      transition: 'all 0.15s',
+      background: isActive ? `${pc}0f` : 'rgba(255,255,255,0.02)',
+      border: `2px solid ${isActive ? pc : 'rgba(255,255,255,0.08)'}`,
+      borderRadius: 14,
+      padding: '10px 14px',
+      boxShadow: isActive ? `0 0 20px ${pc}44` : 'none',
+      transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '1.1rem' }}>{color === 'w' ? '♔' : '♚'}</span>
-          <span style={{ fontWeight: 700, fontSize: '0.82rem', letterSpacing: '0.02em' }}>
-            {color === 'w' ? 'WHITE' : 'BLACK'}
+          <span style={{ fontSize: '1.2rem', filter: isActive ? `drop-shadow(0 0 8px ${pc})` : 'none' }}>
+            {color === 'w' ? '♔' : '♚'}
+          </span>
+          <span style={{
+            fontFamily: '"Boogaloo", sans-serif', fontWeight: 400, fontSize: '1rem',
+            color: isActive ? pc : 'rgba(200,190,255,0.6)',
+          }}>
+            {color === 'w' ? 'White' : 'Black'}
           </span>
           {botThinking && (
-            <span style={{ fontSize: '0.68rem', color: C.red, fontFamily: '"JetBrains Mono", monospace' }}
-              className="animate-strobe">
-              THINKING
-            </span>
+            <span style={{
+              fontFamily: '"Press Start 2P", monospace', fontSize: '0.45rem',
+              color: pc,
+            }} className="animate-blink">THINKING</span>
           )}
           {isActive && !botThinking && (
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.red, display: 'inline-block' }}
-              className="animate-strobe" />
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: pc,
+              boxShadow: `0 0 8px ${pc}`,
+              display: 'inline-block',
+            }} className="animate-blink" />
           )}
         </div>
 
         {/* Spin countdown */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '0.68rem', color: C.sub, fontFamily: '"JetBrains Mono", monospace' }}>
+          <span style={{ fontFamily: '"VT323", monospace', fontSize: '1.1rem', color: 'rgba(200,190,255,0.5)' }}>
             🎰 {movesLeft}
           </span>
-          <div style={{ width: 48, height: 3, background: C.dim }}>
-            <div
-              style={{
-                height: '100%', background: C.red,
-                width: `${Math.max(0, 100 - (movesLeft / spinMax) * 100)}%`,
-                transition: 'width 0.3s',
-              }}
-            />
+          <div style={{ width: 52, height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', borderRadius: 2,
+              background: `linear-gradient(90deg, ${pc}, ${pc}aa)`,
+              width: `${Math.max(0, 100 - (movesLeft / 5) * 100)}%`,
+              transition: 'width 0.3s',
+              boxShadow: `0 0 6px ${pc}`,
+            }} />
           </div>
         </div>
       </div>
@@ -395,27 +361,26 @@ function PlayerBar({
       {/* Active effects */}
       {effects.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 7 }}>
-          {effects.map(e => (
-            <span
-              key={e.id}
-              style={{
-                fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem', fontWeight: 700,
-                padding: '2px 7px',
-                background: EFFECTS[e.type]?.category === 'buff' ? 'rgba(33,212,126,0.12)' : 'rgba(247,47,34,0.12)',
-                color: EFFECTS[e.type]?.category === 'buff' ? C.green : C.nerf,
-                border: `1px solid ${EFFECTS[e.type]?.category === 'buff' ? 'rgba(33,212,126,0.3)' : 'rgba(247,47,34,0.3)'}`,
-                letterSpacing: '0.04em',
-              }}
-            >
-              {EFFECTS[e.type]?.label} ×{e.duration}
-            </span>
-          ))}
+          {effects.map(e => {
+            const isBuff = EFFECTS[e.type]?.category === 'buff';
+            return (
+              <span key={e.id} style={{
+                fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem',
+                padding: '2px 9px', borderRadius: 20,
+                background: isBuff ? 'rgba(57,255,20,0.13)' : 'rgba(255,45,120,0.13)',
+                color: isBuff ? '#39ff14' : '#ff2d78',
+                border: `1px solid ${isBuff ? 'rgba(57,255,20,0.35)' : 'rgba(255,45,120,0.35)'}`,
+                boxShadow: `0 0 8px ${isBuff ? 'rgba(57,255,20,0.2)' : 'rgba(255,45,120,0.2)'}`,
+              }}>
+                {EFFECTS[e.type]?.label} ×{e.duration}
+              </span>
+            );
+          })}
         </div>
       )}
 
-      {/* Captured pieces */}
       {captured.length > 0 && (
-        <div style={{ fontSize: '0.78rem', color: C.sub, marginTop: 5, opacity: 0.7 }}>
+        <div style={{ fontSize: '0.85rem', color: 'rgba(200,190,255,0.4)', marginTop: 5 }}>
           {captured.map((p, i) => <span key={i}>{PIECE_SYMBOLS[p.type]}</span>)}
         </div>
       )}
