@@ -1,0 +1,6 @@
+Two bugs, both making the bot fail to move:
+
+useEffect self-cancellation (game.tsx): botThinking is set inside the effect and listed in its own dependency array. Setting it to true re-triggers the effect, which cancels the pending setTimeout before it fires — so getBotMove() never gets called. Fix: track the "already scheduled" flag with a useRef instead of state, and remove botThinking from the dependency array.
+Bot picks moves the game engine rejects (bot.ts): the bot generates moves via plain chess.js, unaware of custom effects (Force Pawn, Freeze Piece, Downgrade Queen, Shield). If one of these is active, the bot can choose a move that's illegal under the house rules. makeMove() silently rejects it, and since state never changes, the bot gets permanently stuck. Fix: pass the effect-filtered getLegalMoves() list into getBotMove() instead of having it compute moves independently.
+
+Both fixes need to go in together — the first without the second still breaks once an effect triggers, and vice versa.
