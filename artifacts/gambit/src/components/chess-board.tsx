@@ -9,12 +9,12 @@ import { Chess, Move, Square, Color } from 'chess.js';
 import { GambitState } from '@/hooks/gambit-engine';
 import { ChessPiece } from './chess-pieces';
 
-const SQ_LIGHT      = '#eeeed2';
-const SQ_DARK       = '#769656';
+// Raw wood board — warm cream / dark espresso
+const SQ_LIGHT      = '#d9cfbf';
+const SQ_DARK       = '#4a3525';
 
-// Coordinate label colours — each must contrast against its host square
-const COORD_LIGHT   = '#769656'; // green text on cream square
-const COORD_DARK    = '#eeeed2'; // cream text on green square
+const COORD_LIGHT   = '#4a3525';
+const COORD_DARK    = '#d9cfbf';
 
 interface ChessBoardProps {
   chess: Chess;

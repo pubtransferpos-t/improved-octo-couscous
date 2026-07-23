@@ -5,13 +5,24 @@ import { useGambitGame, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambi
 import { EFFECTS, EffectType, GambitState } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
 import SpinWheel from '@/components/spin-wheel';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { getGameSettings } from './home';
 
 const PIECE_SYMBOLS: Record<PieceSymbol, string> = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
+
+const C = {
+  bg:      '#0d0d0d',
+  surface: '#131313',
+  border:  '#272727',
+  red:     '#f72f22',
+  yellow:  '#ffd600',
+  text:    '#ede9e2',
+  sub:     '#777',
+  dim:     '#3a3a3a',
+  green:   '#21d47e',
+  nerf:    '#f72f22',
+} as const;
 
 export default function Game() {
   const [, setLocation] = useLocation();
@@ -58,7 +69,6 @@ export default function Game() {
     botScheduled.current = true;
     setBotThinking(true);
 
-    // Snapshot effect-filtered legal moves NOW (before the async gap).
     const filteredMoves = getLegalMoves();
     console.log('[bot-effect] effect-filtered legal moves:', filteredMoves.length, filteredMoves.map(m => `${m.from}-${m.to}`));
 
@@ -68,8 +78,6 @@ export default function Game() {
       const move = getBotMove(state.fen, settings.botElo, filteredMoves);
       console.log('[bot-effect] getBotMove returned:', move);
       if (move) {
-        // Only pass promotion when it's actually a pawn promotion — passing 'q' on
-        // every move causes makeMove to reject normal moves that have no promotion field.
         const result = makeMove({ from: move.from, to: move.to, promotion: move.promotion });
         console.log('[bot-effect] makeMove result:', result);
       } else {
@@ -89,7 +97,7 @@ export default function Game() {
   useEffect(() => {
     if (settings.mode !== 'bot') return;
     if (pendingSpin === null) return;
-    if (pendingSpin === playerColor) return; // human's spin — shown in UI
+    if (pendingSpin === playerColor) return;
     const timer = setTimeout(() => {
       const pool = settings.enabledEffects;
       if (pool.length > 0) {
@@ -115,7 +123,6 @@ export default function Game() {
       return;
     }
 
-    // Block input on bot's turn
     if (settings.mode === 'bot' && state.turn !== playerColor) return;
 
     if (selectedSquare) {
@@ -130,7 +137,6 @@ export default function Game() {
       }
     }
 
-    // Select a piece
     const piece = chess.get(sq);
     const canControl =
       settings.mode === 'pass-and-play' || settings.mode === 'custom'
@@ -154,29 +160,56 @@ export default function Game() {
     state.turn, makeMove, getLegalMoves, settings.mode, playerColor,
   ]);
 
-  // ── Board orientation ─────────────────────────────────────────────────────
   const boardOrientation: Color | null =
     settings.mode === 'pass-and-play' || settings.mode === 'custom' ? null : playerColor;
 
+  const modeLabel = settings.mode === 'pass-and-play' ? 'same screen'
+    : settings.mode === 'bot' ? 'vs computer'
+    : settings.mode === 'custom' ? 'custom'
+    : 'online';
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, display: 'flex', flexDirection: 'column', fontFamily: '"DM Sans", sans-serif' }}>
+
+      {/* Top accent bar */}
+      <div style={{ height: 3, background: C.red, flexShrink: 0 }} />
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 shrink-0">
-        <Button
-          variant="ghost"
-          size="sm"
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 16px', height: 44, borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+      }}>
+        <button
           onClick={() => setLocation('/')}
-          className="text-gray-400 hover:text-white text-sm"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontFamily: '"DM Sans", sans-serif', fontWeight: 700, fontSize: '0.75rem',
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            color: C.sub, padding: '4px 0',
+          }}
         >
-          ← Menu
-        </Button>
-        <span className="text-amber-400 font-black font-serif text-xl tracking-tight">GAMBIT</span>
-        <span className="text-xs text-gray-500 capitalize w-16 text-right">{settings.mode.replace('-', ' ')}</span>
+          ← Back
+        </button>
+        <span style={{
+          fontFamily: '"Anton", impact, sans-serif', fontSize: '1.3rem',
+          letterSpacing: '0.08em', color: C.text,
+        }}>
+          GAMBIT
+        </span>
+        <span style={{
+          fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem',
+          fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+          color: C.dim, width: 72, textAlign: 'right',
+        }}>
+          {modeLabel}
+        </span>
       </div>
 
       {/* Game layout */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-3">
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12,
+      }}>
         <PlayerBar
           color="b"
           state={state}
@@ -202,7 +235,7 @@ export default function Game() {
         />
       </div>
 
-      {/* Spin wheel (human's spin only) */}
+      {/* Spin wheel */}
       {pendingSpin !== null &&
         (settings.mode !== 'bot' || pendingSpin === playerColor) && (
           <SpinWheel
@@ -217,11 +250,18 @@ export default function Game() {
 
       {/* Effect targeting banner */}
       {effectTargeting && (
-        <div className="fixed bottom-4 inset-x-0 flex justify-center z-40 pointer-events-none">
-          <div className="bg-amber-400 text-gray-900 px-5 py-2.5 rounded-full text-sm font-semibold shadow-xl flex items-center gap-3 pointer-events-auto">
+        <div style={{ position: 'fixed', bottom: 16, left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 40, pointerEvents: 'none' }}>
+          <div style={{
+            background: C.red, color: '#fff',
+            padding: '10px 20px',
+            fontFamily: '"DM Sans", sans-serif', fontWeight: 700, fontSize: '0.85rem',
+            display: 'flex', alignItems: 'center', gap: 12,
+            pointerEvents: 'auto',
+            borderRadius: 0,
+          }}>
             <span>🎯 Select target for <strong>{EFFECTS[effectTargeting.effect as EffectType]?.label}</strong></span>
             <button
-              className="text-gray-700 hover:text-gray-900 font-bold"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', fontWeight: 900, fontSize: '1rem' }}
               onClick={() => setEffectTargeting(null)}
             >
               ✕
@@ -232,29 +272,59 @@ export default function Game() {
 
       {/* Game over overlay */}
       {gameOver.isOver && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 text-center max-w-sm w-full mx-4 shadow-2xl">
-            <div className="text-5xl mb-3">
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.88)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+        }}>
+          <div style={{
+            background: C.surface,
+            borderTop: `3px solid ${C.red}`,
+            padding: '40px 36px',
+            width: '100%', maxWidth: 340, margin: '0 16px',
+            textAlign: 'center',
+          }}>
+            <div style={{ fontSize: '3.5rem', lineHeight: 1, marginBottom: 12 }}>
               {gameOver.result?.includes('checkmate') || gameOver.result?.includes('won')
                 ? gameOver.result?.includes('White') ? '♔' : '♚'
-                : '🤝'}
+                : '½'}
             </div>
-            <h2 className="text-2xl font-bold text-amber-400 mb-2">Game Over</h2>
-            <p className="text-gray-300 mb-6">{gameOver.result}</p>
-            <div className="flex gap-3">
-              <Button
-                className="flex-1 bg-amber-400 hover:bg-amber-300 text-gray-900 font-bold"
+            <h2 style={{
+              fontFamily: '"Anton", impact, sans-serif',
+              fontSize: '2.2rem', letterSpacing: '0.06em',
+              color: C.red, margin: '0 0 8px',
+              textTransform: 'uppercase',
+            }}>
+              Game Over
+            </h2>
+            <p style={{ fontSize: '0.88rem', color: C.sub, marginBottom: 28, lineHeight: 1.5 }}>
+              {gameOver.result}
+            </p>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
                 onClick={() => window.location.reload()}
+                style={{
+                  flex: 1, padding: '13px 0',
+                  fontFamily: '"Anton", impact, sans-serif',
+                  fontSize: '1.1rem', letterSpacing: '0.08em', textTransform: 'uppercase',
+                  background: C.red, color: '#fff',
+                  border: 'none', borderRadius: 0, cursor: 'pointer',
+                }}
               >
-                Play Again
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 border-gray-600 text-gray-300 hover:text-white"
+                Again
+              </button>
+              <button
                 onClick={() => setLocation('/')}
+                style={{
+                  flex: 1, padding: '13px 0',
+                  fontFamily: '"Anton", impact, sans-serif',
+                  fontSize: '1.1rem', letterSpacing: '0.08em', textTransform: 'uppercase',
+                  background: 'transparent', color: C.sub,
+                  border: `1px solid ${C.border}`, borderRadius: 0, cursor: 'pointer',
+                }}
               >
                 Menu
-              </Button>
+              </button>
             </div>
           </div>
         </div>
@@ -263,13 +333,10 @@ export default function Game() {
   );
 }
 
-// ── Player HUD bar ────────────────────────────────────────────────────────────
+/* ── Player HUD ─────────────────────────────────────────────────────────── */
 
 function PlayerBar({
-  color,
-  state,
-  isActive,
-  botThinking,
+  color, state, isActive, botThinking,
 }: {
   color: Color;
   state: GambitState;
@@ -279,32 +346,47 @@ function PlayerBar({
   const effects = state.activeEffects[color];
   const captured = state.capturedPieces.filter(p => p.color !== color);
   const movesLeft = state.spinProgress[color];
+  const spinMax = 5; // approximate for bar width
 
   return (
-    <div
-      className={`w-full max-w-md rounded-xl p-3 transition-all duration-200 ${
-        isActive ? 'bg-gray-800 ring-2 ring-amber-400' : 'bg-gray-900/80'
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">{color === 'w' ? '♔' : '♚'}</span>
-          <span className="font-semibold text-sm">{color === 'w' ? 'White' : 'Black'}</span>
+    <div style={{
+      width: '100%', maxWidth: 520,
+      background: isActive ? 'rgba(247,47,34,0.05)' : C.surface,
+      border: `1px solid ${isActive ? C.red : C.border}`,
+      borderLeft: `3px solid ${isActive ? C.red : C.border}`,
+      padding: '10px 12px',
+      transition: 'all 0.15s',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '1.1rem' }}>{color === 'w' ? '♔' : '♚'}</span>
+          <span style={{ fontWeight: 700, fontSize: '0.82rem', letterSpacing: '0.02em' }}>
+            {color === 'w' ? 'WHITE' : 'BLACK'}
+          </span>
           {botThinking && (
-            <span className="text-xs text-amber-400 animate-pulse">thinking…</span>
+            <span style={{ fontSize: '0.68rem', color: C.red, fontFamily: '"JetBrains Mono", monospace' }}
+              className="animate-strobe">
+              THINKING
+            </span>
           )}
           {isActive && !botThinking && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.red, display: 'inline-block' }}
+              className="animate-strobe" />
           )}
         </div>
 
         {/* Spin countdown */}
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>🎰 in {movesLeft}</span>
-          <div className="w-14 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '0.68rem', color: C.sub, fontFamily: '"JetBrains Mono", monospace' }}>
+            🎰 {movesLeft}
+          </span>
+          <div style={{ width: 48, height: 3, background: C.dim }}>
             <div
-              className="h-full bg-amber-400 transition-all duration-300"
-              style={{ width: `${100 - (movesLeft / 5) * 100}%` }}
+              style={{
+                height: '100%', background: C.red,
+                width: `${Math.max(0, 100 - (movesLeft / spinMax) * 100)}%`,
+                transition: 'width 0.3s',
+              }}
             />
           </div>
         </div>
@@ -312,30 +394,29 @@ function PlayerBar({
 
       {/* Active effects */}
       {effects.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-2">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 7 }}>
           {effects.map(e => (
-            <Badge
+            <span
               key={e.id}
-              className={`text-xs px-1.5 py-0 ${
-                EFFECTS[e.type]?.category === 'buff'
-                  ? 'bg-green-900 text-green-300 border-green-700'
-                  : 'bg-red-900 text-red-300 border-red-700'
-              }`}
+              style={{
+                fontFamily: '"DM Sans", sans-serif', fontSize: '0.68rem', fontWeight: 700,
+                padding: '2px 7px',
+                background: EFFECTS[e.type]?.category === 'buff' ? 'rgba(33,212,126,0.12)' : 'rgba(247,47,34,0.12)',
+                color: EFFECTS[e.type]?.category === 'buff' ? C.green : C.nerf,
+                border: `1px solid ${EFFECTS[e.type]?.category === 'buff' ? 'rgba(33,212,126,0.3)' : 'rgba(247,47,34,0.3)'}`,
+                letterSpacing: '0.04em',
+              }}
             >
               {EFFECTS[e.type]?.label} ×{e.duration}
-            </Badge>
+            </span>
           ))}
         </div>
       )}
 
       {/* Captured pieces */}
       {captured.length > 0 && (
-        <div className="text-sm text-gray-400 mt-1.5 leading-none">
-          {captured.map((p, i) => (
-            <span key={i} className="opacity-70">
-              {PIECE_SYMBOLS[p.type]}
-            </span>
-          ))}
+        <div style={{ fontSize: '0.78rem', color: C.sub, marginTop: 5, opacity: 0.7 }}>
+          {captured.map((p, i) => <span key={i}>{PIECE_SYMBOLS[p.type]}</span>)}
         </div>
       )}
     </div>

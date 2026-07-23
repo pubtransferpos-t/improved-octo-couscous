@@ -14,53 +14,54 @@ const PIECES = ['♔','♕','♖','♗','♘','♙','♚','♛','♜','♝','♞
 interface FlyingPiece { id: number; piece: string; x: number; }
 
 const MODES = [
-  { id: 'bot'           as const, label: 'vs Computer',  desc: 'AI opponent, adjustable strength' },
-  { id: 'pass-and-play' as const, label: 'Same Screen',  desc: 'Two players, one device, take turns' },
-  { id: 'custom'        as const, label: 'Custom Rules', desc: 'Choose which modifiers are in the pool' },
-  { id: 'online'        as const, label: 'Online',       desc: 'Play against someone over the internet' },
+  { id: 'bot'           as const, label: 'vs Computer',  desc: 'AI opponent — set the ELO' },
+  { id: 'pass-and-play' as const, label: 'Same Screen',  desc: 'Two players, one device' },
+  { id: 'custom'        as const, label: 'Custom',       desc: 'Hand-pick the modifier pool' },
+  { id: 'online'        as const, label: 'Online',       desc: 'Play someone over the internet' },
 ];
 
 function eloLabel(elo: number): string {
   if (elo < 400)  return 'Beginner';
   if (elo < 700)  return 'Casual';
-  if (elo < 1000) return 'Club player';
+  if (elo < 1000) return 'Club';
   if (elo < 1300) return 'Intermediate';
-  if (elo < 1600) return 'Strong amateur';
+  if (elo < 1600) return 'Strong Amateur';
   if (elo < 1900) return 'Expert';
   if (elo < 2200) return 'Candidate Master';
   if (elo < 2500) return 'FIDE Master';
-  if (elo < 2700) return 'International Master';
+  if (elo < 2700) return 'IM';
   if (elo < 2850) return 'Grandmaster';
   return 'Super-GM';
 }
 
-/* ── palette (used inline so the dark bg doesn't need Tailwind dark-mode) ── */
+/* ── raw palette ────────────────────────────────────────────────────────── */
 const C = {
-  bg:      '#0f0e0d',
-  surface: '#161513',
-  surfaceHover: '#1a1917',
-  surfaceActive: '#1f1e1b',
-  border:  '#272522',
-  accent:  '#d4a843',
-  accentDim: '#c49a35',
-  text:    '#e8e2d8',
-  muted:   '#5e5a54',
-  mutedLo: '#302e2b',
-  green:   '#6ea86e',
-  red:     '#b86e6e',
+  bg:          '#0d0d0d',
+  surface:     '#131313',
+  surfaceHov:  '#181818',
+  surfaceAct:  '#1c1c1c',
+  border:      '#272727',
+  borderBright:'#3a3a3a',
+  red:         '#f72f22',
+  redDim:      '#c92218',
+  yellow:      '#ffd600',
+  text:        '#ede9e2',
+  sub:         '#999',
+  dim:         '#444',
+  green:       '#21d47e',
+  nerf:        '#f72f22',
 } as const;
 
-/* ── label style (reused) ───────────────────────────────────────────────── */
-const fieldLabel: React.CSSProperties = {
-  fontFamily: '"Outfit", sans-serif',
-  fontSize: '0.72rem',
-  fontWeight: 500,
-  letterSpacing: '0.08em',
+const LABEL: React.CSSProperties = {
+  fontFamily: '"DM Sans", sans-serif',
+  fontSize: '0.7rem',
+  fontWeight: 700,
+  letterSpacing: '0.12em',
   textTransform: 'uppercase',
-  color: C.muted,
+  color: C.sub,
 };
 
-/* ── main component ─────────────────────────────────────────────────────── */
+/* ── component ──────────────────────────────────────────────────────────── */
 export default function Home() {
   const [, setLocation] = useLocation();
   const [settings, setSettings] = useState<GameSettings>({ ..._settings });
@@ -71,12 +72,12 @@ export default function Home() {
 
   const spewPiece = useCallback(() => {
     const id = nextId.current++;
-    setFlyingPieces(p => [...p.slice(-14), {
+    setFlyingPieces(p => [...p.slice(-12), {
       id,
       piece: PIECES[Math.floor(Math.random() * PIECES.length)],
-      x: 8 + Math.random() * 84,
+      x: 5 + Math.random() * 90,
     }]);
-    setTimeout(() => setFlyingPieces(p => p.filter(fp => fp.id !== id)), 1500);
+    setTimeout(() => setFlyingPieces(p => p.filter(fp => fp.id !== id)), 1400);
   }, []);
 
   const startGame = () => {
@@ -89,21 +90,20 @@ export default function Home() {
     : '';
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.text }}>
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: '"DM Sans", sans-serif' }}>
 
-      {/* flying pieces */}
+      {/* Flying pieces */}
       <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 50 }}>
         {flyingPieces.map(fp => (
           <span
             key={fp.id}
+            className="animate-yeet"
             style={{
               position: 'absolute',
               left: `${fp.x}%`,
-              bottom: '35%',
-              fontSize: '1.6rem',
-              color: C.accent,
-              opacity: 0.85,
-              animation: 'gc-yeet 1.5s cubic-bezier(0.2,0.9,0.3,1) forwards',
+              bottom: '40%',
+              fontSize: '1.5rem',
+              color: C.red,
               userSelect: 'none',
             }}
           >
@@ -112,48 +112,48 @@ export default function Home() {
         ))}
       </div>
 
-      <div style={{ maxWidth: 600, margin: '0 auto', padding: '80px 36px 96px' }}>
+      {/* Top rule */}
+      <div style={{ height: 3, background: C.red }} />
 
-        {/* ── title ── */}
-        <header style={{ marginBottom: 56 }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '52px 28px 80px' }}>
+
+        {/* ── Title ── */}
+        <header style={{ marginBottom: 52 }}>
           <button
             onClick={spewPiece}
-            style={{ display: 'block', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+            style={{ display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
             aria-label="Gamble Chess"
           >
             <h1 style={{
-              fontFamily: '"Playfair Display", Georgia, serif',
-              fontSize: 'clamp(2.8rem, 8vw, 5rem)',
-              fontWeight: 900,
-              letterSpacing: '-0.04em',
-              lineHeight: 0.95,
+              fontFamily: '"Anton", impact, sans-serif',
+              fontSize: 'clamp(3.8rem, 14vw, 6.5rem)',
+              fontWeight: 400,
+              letterSpacing: '0.03em',
+              lineHeight: 0.88,
               color: C.text,
-              transform: 'rotate(-1.1deg)',
-              display: 'inline-block',
               margin: 0,
+              textTransform: 'uppercase',
             }}>
-              Gamble Chess
+              GAMBLE<br />CHESS
             </h1>
           </button>
-
           <p style={{
-            marginTop: 18,
-            fontFamily: '"Outfit", sans-serif',
-            fontSize: '0.95rem',
+            marginTop: 16,
+            fontSize: '0.88rem',
             fontWeight: 400,
-            color: C.muted,
-            lineHeight: 1.6,
-            maxWidth: 380,
+            color: C.sub,
+            lineHeight: 1.65,
+            maxWidth: 340,
           }}>
-            Standard chess, plus a modifier wheel that spins every few moves.
-            You get a random buff or nerf and keep playing.
+            Chess, plus a modifier wheel every few moves.
+            Random buff or nerf. Keep playing.
           </p>
         </header>
 
-        {/* ── mode selection ── */}
-        <section style={{ marginBottom: 40 }}>
-          <p style={{ ...fieldLabel, marginBottom: 10 }}>Mode</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        {/* ── Mode ── */}
+        <section style={{ marginBottom: 36 }}>
+          <p style={{ ...LABEL, marginBottom: 10 }}>Mode</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
             {MODES.map(mode => {
               const active = settings.mode === mode.id;
               return (
@@ -169,17 +169,16 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── settings ── */}
-        <section style={{ display: 'flex', flexDirection: 'column', gap: 32, marginBottom: 44 }}>
+        {/* ── Settings ── */}
+        <section style={{ display: 'flex', flexDirection: 'column', gap: 28, marginBottom: 40 }}>
 
-          {/* ELO */}
           {settings.mode === 'bot' && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-                <span style={fieldLabel}>Opponent strength</span>
-                <span style={{ fontFamily: '"Space Mono", monospace', fontSize: '0.95rem', color: C.accent }}>
-                  {settings.botElo}&thinsp;
-                  <span style={{ fontFamily: '"Outfit", sans-serif', fontSize: '0.72rem', color: C.muted, fontWeight: 400 }}>
+                <span style={LABEL}>Opponent strength</span>
+                <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.85rem', color: C.red }}>
+                  {settings.botElo}
+                  <span style={{ fontFamily: '"DM Sans", sans-serif', fontSize: '0.7rem', color: C.sub, marginLeft: 6, fontWeight: 400 }}>
                     {eloLabel(settings.botElo)}
                   </span>
                 </span>
@@ -188,16 +187,15 @@ export default function Home() {
                 type="range" min={100} max={2850} step={25}
                 value={settings.botElo}
                 onChange={e => setSettings(s => ({ ...s, botElo: Number(e.target.value) }))}
-                style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
+                style={{ width: '100%', accentColor: C.red, cursor: 'pointer', display: 'block' }}
               />
             </div>
           )}
 
-          {/* Color */}
           {settings.mode === 'bot' && (
             <div>
-              <p style={{ ...fieldLabel, marginBottom: 10 }}>Play as</p>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <p style={{ ...LABEL, marginBottom: 10 }}>Play as</p>
+              <div style={{ display: 'flex', gap: 4 }}>
                 {(['w', 'b', 'random'] as const).map(c => (
                   <ColorBtn
                     key={c}
@@ -210,11 +208,10 @@ export default function Home() {
             </div>
           )}
 
-          {/* Spin interval */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-              <span style={fieldLabel}>Modifier interval</span>
-              <span style={{ fontFamily: '"Space Mono", monospace', fontSize: '0.95rem', color: C.text }}>
+              <span style={LABEL}>Modifier every</span>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.85rem', color: C.text }}>
                 {settings.spinInterval} moves
               </span>
             </div>
@@ -222,31 +219,32 @@ export default function Home() {
               type="range" min={3} max={10} step={1}
               value={settings.spinInterval}
               onChange={e => setSettings(s => ({ ...s, spinInterval: Number(e.target.value) }))}
-              style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
+              style={{ width: '100%', accentColor: C.red, cursor: 'pointer', display: 'block' }}
             />
           </div>
 
-          {/* Effects list — custom mode only */}
           {settings.mode === 'custom' && (
             <div>
               <button
                 onClick={() => setShowEffects(v => !v)}
                 style={{
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontFamily: '"Outfit", sans-serif', fontSize: '0.8rem',
-                  fontWeight: 500, color: C.accent, letterSpacing: '0.02em',
+                  fontFamily: '"DM Sans", sans-serif', fontSize: '0.78rem',
+                  fontWeight: 600, color: C.red, letterSpacing: '0.01em',
+                  textTransform: 'uppercase',
                 }}
               >
-                {showEffects ? 'Hide' : 'Edit'} effects
-                <span style={{ color: C.muted, fontWeight: 400 }}>
+                {showEffects ? '− Hide' : '+ Edit'} effects
+                <span style={{ color: C.sub, fontWeight: 400, textTransform: 'none' }}>
                   &ensp;{settings.enabledEffects.length} active
                 </span>
               </button>
               {showEffects && (
                 <div style={{
-                  marginTop: 14,
+                  marginTop: 12,
                   display: 'grid', gridTemplateColumns: '1fr 1fr',
-                  gap: '10px 20px', maxHeight: 200, overflowY: 'auto',
+                  gap: '10px 24px', maxHeight: 200, overflowY: 'auto',
+                  borderLeft: `2px solid ${C.border}`, paddingLeft: 12,
                 }}>
                   {(Object.entries(EFFECTS) as [EffectType, typeof EFFECTS[EffectType]][]).map(([id, def]) => (
                     <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -262,8 +260,8 @@ export default function Home() {
                         }
                       />
                       <span style={{
-                        fontFamily: '"Outfit", sans-serif', fontSize: '0.75rem',
-                        color: def.category === 'buff' ? C.green : C.red,
+                        fontFamily: '"DM Sans", sans-serif', fontSize: '0.74rem',
+                        color: def.category === 'buff' ? C.green : C.nerf,
                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       }}>
                         {def.label}
@@ -275,40 +273,39 @@ export default function Home() {
             </div>
           )}
 
-          {/* Online status */}
           {settings.mode === 'online' && (
-            <p style={{ fontFamily: '"Outfit", sans-serif', fontSize: '0.82rem', color: workerUrl ? C.green : C.red }}>
+            <p style={{ fontSize: '0.8rem', color: workerUrl ? C.green : C.nerf, fontFamily: '"JetBrains Mono", monospace' }}>
               {workerUrl
-                ? `Worker: ${workerUrl.replace(/https?:\/\//, '').slice(0, 52)}`
-                : 'No worker URL configured — set one below'}
+                ? `✓ ${workerUrl.replace(/https?:\/\//, '').slice(0, 48)}`
+                : '✗ no worker url — set one below'}
             </p>
           )}
         </section>
 
-        {/* ── play button ── */}
+        {/* ── Play ── */}
         <PlayButton onClick={startGame} />
 
-        {/* ── worker URL ── */}
-        <div style={{ marginTop: 52, paddingTop: 20, borderTop: `1px solid ${C.mutedLo}` }}>
+        {/* ── Worker URL ── */}
+        <div style={{ marginTop: 48 }}>
+          <div style={{ height: 1, background: C.border, marginBottom: 20 }} />
           <button
             onClick={() => setShowWorker(v => !v)}
             style={{
               display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center',
               background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-              fontFamily: '"Outfit", sans-serif', fontSize: '0.72rem',
-              color: C.mutedLo, letterSpacing: '0.04em',
+              fontFamily: '"DM Sans", sans-serif', fontSize: '0.7rem',
+              fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+              color: C.dim,
             }}
-            onMouseEnter={e => (e.currentTarget.style.color = C.muted)}
-            onMouseLeave={e => (e.currentTarget.style.color = C.mutedLo)}
           >
-            <span>Multiplayer worker URL</span>
-            <span style={{ fontFamily: '"Space Mono", monospace', fontSize: '0.65rem' }}>
-              {showWorker ? '↑' : '↓'}
+            <span>Multiplayer Worker URL</span>
+            <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.65rem' }}>
+              {showWorker ? '▲' : '▼'}
             </span>
           </button>
 
           {showWorker && (
-            <div style={{ marginTop: 10 }}>
+            <div style={{ marginTop: 10 }} className="animate-slide-up">
               <input
                 type="url"
                 placeholder="https://your-worker.workers.dev"
@@ -316,34 +313,26 @@ export default function Home() {
                 onChange={e => localStorage.setItem('gambit_worker_url', e.target.value)}
                 style={{
                   width: '100%', boxSizing: 'border-box',
-                  padding: '9px 12px',
-                  fontFamily: '"Space Mono", monospace', fontSize: '0.72rem',
+                  padding: '10px 12px',
+                  fontFamily: '"JetBrains Mono", monospace', fontSize: '0.72rem',
                   background: C.surface, border: `1px solid ${C.border}`,
-                  borderRadius: 3, color: C.text, outline: 'none',
+                  borderRadius: 0, color: C.text, outline: 'none',
                 }}
-                onFocus={e => (e.currentTarget.style.borderColor = C.accent)}
+                onFocus={e => (e.currentTarget.style.borderColor = C.red)}
                 onBlur={e => (e.currentTarget.style.borderColor = C.border)}
               />
               <p style={{
-                marginTop: 7,
-                fontFamily: '"Outfit", sans-serif', fontSize: '0.7rem',
-                color: C.mutedLo, lineHeight: 1.6,
+                marginTop: 8,
+                fontFamily: '"DM Sans", sans-serif', fontSize: '0.7rem',
+                color: C.dim, lineHeight: 1.6,
               }}>
-                Free plan is 100k requests/day. Game polls every 8 seconds.
-                See <code style={{ color: C.muted }}>worker/README.md</code> for setup.
+                Free Cloudflare plan: 100k requests/day. Game polls every 8s.
+                See <code style={{ color: C.sub }}>worker/README.md</code>.
               </p>
             </div>
           )}
         </div>
       </div>
-
-      <style>{`
-        @keyframes gc-yeet {
-          0%   { opacity: 0.85; transform: translateY(0) scale(1) rotate(0deg); }
-          25%  { opacity: 0.85; }
-          100% { opacity: 0; transform: translateY(-160px) scale(0.25) rotate(220deg); }
-        }
-      `}</style>
     </div>
   );
 }
@@ -361,24 +350,24 @@ function ModeCard({ label, desc, active, onClick }: {
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'block', textAlign: 'left', cursor: 'pointer',
-        padding: '14px 16px',
-        background: active ? C.surfaceActive : hovered ? C.surfaceHover : C.surface,
-        border: `1px solid ${active ? C.accent : C.border}`,
-        borderLeft: `3px solid ${active ? C.accent : 'transparent'}`,
-        borderRadius: 4,
-        transition: 'background 0.1s, border-color 0.1s',
+        padding: '13px 14px',
+        background: active ? 'rgba(247,47,34,0.07)' : hovered ? C.surfaceHov : C.surface,
+        border: `1px solid ${active ? C.red : hovered ? C.borderBright : C.border}`,
+        borderLeft: `3px solid ${active ? C.red : 'transparent'}`,
+        borderRadius: 0,
+        transition: 'all 0.1s',
       }}
     >
       <div style={{
-        fontFamily: '"Outfit", sans-serif', fontWeight: 600,
-        fontSize: '0.88rem', color: active ? C.accent : C.text,
-        marginBottom: 4, letterSpacing: '-0.01em',
+        fontFamily: '"DM Sans", sans-serif', fontWeight: 700,
+        fontSize: '0.85rem', color: active ? C.red : C.text,
+        marginBottom: 3, letterSpacing: '-0.01em',
       }}>
         {label}
       </div>
       <div style={{
-        fontFamily: '"Outfit", sans-serif', fontWeight: 400,
-        fontSize: '0.72rem', color: C.muted, lineHeight: 1.45,
+        fontFamily: '"DM Sans", sans-serif', fontWeight: 400,
+        fontSize: '0.7rem', color: C.sub, lineHeight: 1.4,
       }}>
         {desc}
       </div>
@@ -395,11 +384,12 @@ function ColorBtn({ label, active, onClick }: { label: string; active: boolean; 
       onMouseLeave={() => setHovered(false)}
       style={{
         flex: 1, padding: '9px 0',
-        fontFamily: '"Outfit", sans-serif', fontWeight: 500, fontSize: '0.82rem',
-        borderRadius: 3,
-        border: `1px solid ${active ? C.accent : C.border}`,
-        background: active ? C.accent : hovered ? C.surfaceHover : 'transparent',
-        color: active ? C.bg : C.muted,
+        fontFamily: '"DM Sans", sans-serif', fontWeight: 700,
+        fontSize: '0.78rem', letterSpacing: '0.02em',
+        borderRadius: 0,
+        border: `1px solid ${active ? C.red : C.border}`,
+        background: active ? C.red : hovered ? C.surfaceHov : 'transparent',
+        color: active ? '#fff' : C.sub,
         cursor: 'pointer', transition: 'all 0.1s',
       }}
     >
@@ -419,17 +409,19 @@ function PlayButton({ onClick }: { onClick: () => void }) {
       onMouseDown={() => setPressed(true)}
       onMouseUp={() => setPressed(false)}
       style={{
-        width: '100%', padding: '15px 0',
-        fontFamily: '"Outfit", sans-serif', fontWeight: 700,
-        fontSize: '1rem', letterSpacing: '0.05em',
-        background: hovered ? C.accentDim : C.accent,
-        color: C.bg, border: 'none', borderRadius: 3,
+        width: '100%', padding: '17px 0',
+        fontFamily: '"Anton", impact, sans-serif',
+        fontWeight: 400, fontSize: '1.5rem',
+        letterSpacing: '0.1em', textTransform: 'uppercase',
+        background: hovered ? '#c92218' : '#f72f22',
+        color: '#fff',
+        border: 'none', borderRadius: 0,
         cursor: 'pointer',
-        transform: pressed ? 'scale(0.988)' : 'none',
-        transition: 'background 0.1s, transform 0.08s',
+        transform: pressed ? 'scale(0.985)' : 'scale(1)',
+        transition: 'background 0.08s, transform 0.06s',
       }}
     >
-      Play
+      PLAY
     </button>
   );
 }
