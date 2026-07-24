@@ -44,6 +44,13 @@ npm run dev   # starts at http://localhost:8787
 | POST | `/rooms/:id/move` | Submit a move with resulting FEN |
 | POST | `/rooms/:id/effect` | Submit a spin result/board effect |
 | POST | `/rooms/:id/resign` | Resign the game |
+| POST | `/matchmaking/join` | Enter the global FIFO matchmaking queue |
+| GET | `/matchmaking/status?ticket=...` | Poll a matchmaking ticket |
+| POST | `/matchmaking/leave` | Leave the matchmaking queue |
+
+Online play enters the queue before a board is created. The first player
+waits, and the next player is matched automatically. Matchmaking responses
+include `playersOnline` so the client can show how many people are waiting.
 
 ### POST /rooms
 
