@@ -4,6 +4,7 @@ import { GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
 import { EFFECTS, EffectType } from '@/hooks/gambit-engine';
 import { Switch } from '@/components/ui/switch';
 import SnakeGame from '@/components/snake-game';
+import OrbField from '@/components/orb-field';
 
 /* ── persistent settings store ─────────────────────────────────────────── */
 let _settings: GameSettings = { ...DEFAULT_SETTINGS };
@@ -13,12 +14,8 @@ export function getGameSettings(): GameSettings { return _settings; }
 const PIECES = ['♔','♕','♖','♗','♘','♙','♚','♛','♜','♝','♞','♟'];
 
 const DVDS = [
-  { piece:'♕', color:'#ff2d78', xDur:'7.1s', yDur:'5.3s', size:64 },
-  { piece:'♞', color:'#00f5ff', xDur:'9.3s', yDur:'6.7s', size:58 },
-  { piece:'♜', color:'#39ff14', xDur:'6.2s', yDur:'8.1s', size:60 },
-  { piece:'♝', color:'#bf5fff', xDur:'11.0s',yDur:'7.4s', size:56 },
-  { piece:'♛', color:'#ffee00', xDur:'8.5s', yDur:'4.9s', size:62 },
-  { piece:'♟', color:'#ff6b00', xDur:'5.8s', yDur:'9.2s', size:52 },
+  { color:'#ff2d78' }, { color:'#00f5ff' }, { color:'#39ff14' },
+  { color:'#bf5fff' }, { color:'#ffee00' }, { color:'#ff6b00' },
 ];
 
 const MODES = [
@@ -115,17 +112,11 @@ export default function Home() {
       : ''
   );
 
-  // On mount, fetch the server-configured worker URL and auto-apply it
+  // Always route multiplayer through the server proxy — the real worker URL stays server-side
   useEffect(() => {
-    fetch('/api/worker-url')
-      .then(r => r.json())
-      .then((data: { url: string | null }) => {
-        if (data.url) {
-          localStorage.setItem('gambit_worker_url', data.url);
-          setWorkerUrl(data.url);
-        }
-      })
-      .catch(() => { /* no API, use whatever's in localStorage */ });
+    const proxyUrl = `${window.location.origin}/api/worker-proxy`;
+    localStorage.setItem('gambit_worker_url', proxyUrl);
+    setWorkerUrl(proxyUrl);
   }, []);
 
   return (
@@ -145,25 +136,8 @@ export default function Home() {
           }} />
         </div>
 
-        {/* Bouncing DVDs */}
-        <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
-          {DVDS.map((dvd, i) => (
-            <div key={i} style={{
-              position: 'absolute',
-              width: dvd.size, height: dvd.size, borderRadius: '50%',
-              background: `${dvd.color}1a`, border: `2.5px solid ${dvd.color}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: dvd.size * 0.5, color: dvd.color,
-              boxShadow: `0 0 18px ${dvd.color}55, 0 0 36px ${dvd.color}22`,
-              animation: `dvd-x-${i+1} ${dvd.xDur} linear alternate infinite, dvd-y-${i+1} ${dvd.yDur} linear alternate infinite`,
-            }}>
-              {dvd.piece}
-            </div>
-          ))}
-          {/* Corner rings */}
-          <div style={{ position:'absolute',top:-55,right:-55,width:220,height:220,borderRadius:'50%',border:'2px dashed rgba(191,95,255,0.18)' }} className="animate-spin-slow" />
-          <div style={{ position:'absolute',bottom:-40,left:-40,width:170,height:170,borderRadius:'50%',border:'2px dashed rgba(0,245,255,0.15)' }} className="animate-spin-rev" />
-        </div>
+        {/* Physics orbs */}
+        <OrbField />
 
         {/* Floating pieces + star bursts */}
         <div style={{ position:'fixed',inset:0,pointerEvents:'none',overflow:'hidden',zIndex:60 }}>
@@ -382,37 +356,15 @@ export default function Home() {
             PLAY
           </button>
 
-          {/* Worker URL — always visible */}
+          {/* Online status indicator — no URL exposed to players */}
           <div style={{ marginTop:36 }}>
-            <div style={{ height:1, background:'rgba(191,95,255,0.15)', marginBottom:20 }} />
+            <div style={{ height:1, background:'rgba(191,95,255,0.15)', marginBottom:14 }} />
             <p style={{
-              fontFamily:'"Press Start 2P", monospace', fontSize:'0.5rem',
-              color:'rgba(200,190,255,0.35)', letterSpacing:'0.1em', marginBottom:10,
+              fontFamily:'"Press Start 2P", monospace', fontSize:'0.45rem',
+              color: workerUrl ? 'rgba(57,255,20,0.45)' : 'rgba(200,190,255,0.2)',
+              letterSpacing:'0.08em',
             }}>
-              // multiplayer worker url
-            </p>
-            <input
-              type="url"
-              placeholder="https://your-worker.workers.dev"
-              defaultValue={workerUrl}
-              onChange={e => localStorage.setItem('gambit_worker_url', e.target.value)}
-              style={{
-                width:'100%', boxSizing:'border-box', padding:'10px 14px',
-                fontFamily:'"VT323", monospace', fontSize:'1.1rem',
-                background:'rgba(191,95,255,0.07)',
-                border:`1.5px solid ${workerUrl ? 'rgba(57,255,20,0.4)' : 'rgba(191,95,255,0.25)'}`,
-                borderRadius:8, color:'#f0f0ff', outline:'none', transition:'border-color 0.15s',
-              }}
-              onFocus={e => (e.currentTarget.style.borderColor = '#bf5fff')}
-              onBlur={e => (e.currentTarget.style.borderColor = workerUrl ? 'rgba(57,255,20,0.4)' : 'rgba(191,95,255,0.25)')}
-            />
-            <p style={{
-              marginTop:7, fontFamily:'"Boogaloo", sans-serif', fontSize:'0.82rem',
-              color:'rgba(200,190,255,0.3)', lineHeight:1.5,
-            }}>
-              {workerUrl
-                ? <span style={{ color:'#39ff14' }}>Connected — {workerUrl.replace(/https?:\/\//, '').slice(0, 50)}</span>
-                : 'Deploy your Cloudflare Worker and paste the URL here for online play. See worker/README.md.'}
+              {workerUrl ? '// online play: ready' : '// online play: offline'}
             </p>
           </div>
         </div>
