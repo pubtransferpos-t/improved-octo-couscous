@@ -53,6 +53,11 @@ The Worker must be deployed separately to Cloudflare. Steps (all browser-based, 
 2. In Cloudflare dashboard → Workers & Pages → Create → Import a repository → select this repo, root dir = `worker/`
 3. The deployed Worker URL (e.g. `https://gambit-chess.yourname.workers.dev`) is pasted into the game's Settings page by the user
 
+Online Play now uses the Worker's global matchmaking queue. After changing
+anything under `worker/`, redeploy that Worker before testing Online mode.
+Players first see a waiting screen with the active player count; the board is
+created and shown only after a second player is matched.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._

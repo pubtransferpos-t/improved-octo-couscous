@@ -21,14 +21,21 @@ function readWorkerUrl(): string | null {
 
 router.get("/worker-url", (_req, res) => {
   const url = readWorkerUrl();
-  if (!url) return res.json({ url: null });
+  if (!url) {
+    res.json({ url: null });
+    return;
+  }
   res.json({ url });
+  return;
 });
 
 // Checks whether the worker URL is configured AND responds
 router.get("/worker-status", async (_req, res) => {
   const url = readWorkerUrl();
-  if (!url) return res.json({ online: false, reason: "no_url" });
+  if (!url) {
+    res.json({ online: false, reason: "no_url" });
+    return;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4000);
@@ -37,9 +44,11 @@ router.get("/worker-status", async (_req, res) => {
     await fetch(url, { method: "GET", signal: controller.signal });
     clearTimeout(timer);
     res.json({ online: true });
+    return;
   } catch {
     clearTimeout(timer);
     res.json({ online: false, reason: "unreachable" });
+    return;
   }
 });
 

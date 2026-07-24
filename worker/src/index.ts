@@ -8,14 +8,20 @@
  *   POST   /rooms/:id/move         → Submit a move
  *   POST   /rooms/:id/effect       → Submit a spin effect
  *   POST   /rooms/:id/resign       → Resign
+ *   POST   /matchmaking/join       → Enter the global matchmaking queue
+ *   GET    /matchmaking/status     → Poll a matchmaking ticket
+ *   POST   /matchmaking/leave      → Leave the matchmaking queue
  */
 
 import { GameRoom } from "./game-room";
+import { Matchmaker } from "./matchmaker";
 
 export { GameRoom };
+export { Matchmaker };
 
 export interface Env {
   GAME_ROOMS: DurableObjectNamespace;
+  MATCHMAKER: DurableObjectNamespace;
 }
 
 export default {
@@ -32,6 +38,18 @@ export default {
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
+    }
+
+    // Matchmaking is backed by one globally shared Durable Object so all
+    // players, regardless of device or room, see the same queue.
+    if (url.pathname === "/matchmaking" || url.pathname.startsWith("/matchmaking/")) {
+      const matchmakerId = env.MATCHMAKER.idFromName("global");
+      const stub = env.MATCHMAKER.get(matchmakerId);
+      return stub.fetch(new Request(url.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      }));
     }
 
     // Route: /rooms

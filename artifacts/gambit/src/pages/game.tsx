@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { Color, Move, PieceSymbol, Square } from 'chess.js';
-import { useGambitGame, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
+import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
 import { EFFECTS, EffectType, GambitState } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
 import SpinWheel from '@/components/spin-wheel';
@@ -18,7 +18,8 @@ export default function Game() {
     try { return getGameSettings(); } catch { return DEFAULT_SETTINGS; }
   })();
 
-  const [playerColor] = useState<Color>(() =>
+  const onlineMatch = useOnlineMatch(settings);
+  const [playerColor, setPlayerColor] = useState<Color>(() =>
     settings.playerColor === 'random'
       ? Math.random() < 0.5 ? 'w' : 'b'
       : settings.playerColor as Color,
@@ -33,7 +34,13 @@ export default function Game() {
     state, chess, pendingSpin, setPendingSpin,
     gameOver, makeMove, getLegalMoves,
     initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
-  } = useGambitGame(settings);
+  } = useGambitGame(settings, onlineMatch);
+
+  useEffect(() => {
+    if (settings.mode === 'online' && onlineMatch.status === 'matched' && onlineMatch.color) {
+      setPlayerColor(onlineMatch.color);
+    }
+  }, [settings.mode, onlineMatch.status, onlineMatch.color]);
 
   // ── Bot AI ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -98,6 +105,20 @@ export default function Game() {
       else { setSelectedSquare(sq); setLegalMoves(getLegalMoves(sq)); }
     } else { setSelectedSquare(null); setLegalMoves([]); }
   }, [effectTargeting, handleTargetClick, selectedSquare, legalMoves, chess, state.turn, makeMove, getLegalMoves, settings.mode, playerColor]);
+
+  // Keep this conditional render after every hook so the component has the
+  // same hook order while a player transitions from waiting to matched.
+  if (
+    settings.mode === 'online' &&
+    (onlineMatch.status !== 'matched' || playerColor !== onlineMatch.color)
+  ) {
+    return (
+      <MatchmakingScreen
+        match={onlineMatch}
+        onCancel={() => setLocation('/')}
+      />
+    );
+  }
 
   const boardOrientation: Color | null =
     settings.mode === 'pass-and-play' || settings.mode === 'custom' ? null : playerColor;
@@ -171,6 +192,7 @@ export default function Game() {
           state={state}
           selectedSquare={selectedSquare}
           legalMoves={legalMoves}
+          lastMove={null}
           onSquareClick={handleSquareClick}
           playerColor={boardOrientation}
           effectTargeting={effectTargeting}
@@ -288,6 +310,63 @@ export default function Game() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MatchmakingScreen({ match, onCancel }: {
+  match: ReturnType<typeof useOnlineMatch>;
+  onCancel: () => void;
+}) {
+  const isError = match.status === 'error';
+  return (
+    <div style={{
+      minHeight: '100vh', background: '#0d0a1a', color: '#f0f0ff',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 24, fontFamily: '"Boogaloo", sans-serif',
+    }}>
+      <div style={{
+        width: '100%', maxWidth: 420, textAlign: 'center',
+        background: 'linear-gradient(145deg, #14102a, #1a1230)',
+        border: `2px solid ${isError ? '#ff2d78' : '#bf5fff'}`,
+        borderRadius: 24, padding: '42px 28px',
+        boxShadow: `0 0 50px ${isError ? 'rgba(255,45,120,0.22)' : 'rgba(191,95,255,0.25)'}`,
+      }}>
+        <div style={{ fontSize: '4rem', marginBottom: 6 }}>{isError ? '⚠' : '♞'}</div>
+        <h1 style={{
+          fontFamily: '"Permanent Marker", cursive', fontSize: '2.35rem',
+          margin: '0 0 12px',
+          background: 'linear-gradient(135deg, #bf5fff, #00f5ff)',
+          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+        }}>
+          {isError ? 'Matchmaking Error' : 'Finding your rival…'}
+        </h1>
+        <p style={{ color: 'rgba(220,210,255,0.72)', fontSize: '1.15rem', margin: '0 0 22px' }}>
+          {match.message}
+        </p>
+        {!isError && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 9,
+            color: '#39ff14', fontFamily: '"Press Start 2P", monospace',
+            fontSize: '0.52rem', letterSpacing: '0.06em',
+            background: 'rgba(57,255,20,0.08)', border: '1px solid rgba(57,255,20,0.25)',
+            borderRadius: 20, padding: '10px 14px', marginBottom: 28,
+          }}>
+            <span className="animate-blink" style={{ width: 8, height: 8, borderRadius: '50%', background: '#39ff14' }} />
+            {match.playersOnline} PLAYER{match.playersOnline === 1 ? '' : 'S'} ONLINE
+          </div>
+        )}
+        <div>
+          <button onClick={onCancel} style={{
+            padding: '12px 24px', borderRadius: 12, cursor: 'pointer',
+            fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
+            color: '#bf5fff', background: 'rgba(191,95,255,0.12)',
+            border: '2px solid rgba(191,95,255,0.4)',
+          }}>
+            ← Leave queue
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

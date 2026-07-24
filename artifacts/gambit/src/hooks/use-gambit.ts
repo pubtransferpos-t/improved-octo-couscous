@@ -18,7 +18,107 @@ export const DEFAULT_SETTINGS: GameSettings = {
   enabledEffects: Object.keys(EFFECTS) as EffectType[],
 };
 
-export function useGambitGame(settings: GameSettings) {
+export interface OnlineMatch {
+  status: 'checking' | 'waiting' | 'matched' | 'error';
+  ticket?: string;
+  roomId?: string;
+  color?: Color;
+  playersOnline: number;
+  message: string;
+}
+
+const WORKER_PROXY = '/api/worker-proxy';
+
+export function useOnlineMatch(settings: GameSettings): OnlineMatch {
+  const [match, setMatch] = useState<OnlineMatch>({
+    status: settings.mode === 'online' ? 'checking' : 'matched',
+    playersOnline: 0,
+    message: settings.mode === 'online' ? 'Connecting to matchmaking…' : '',
+  });
+
+  useEffect(() => {
+    if (settings.mode !== 'online') return;
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let ticket: string | undefined;
+
+    const poll = async () => {
+      if (cancelled || !ticket) return;
+      try {
+        const response = await fetch(`${WORKER_PROXY}/matchmaking/status?ticket=${encodeURIComponent(ticket)}`);
+        const data = await response.json() as Partial<OnlineMatch> & { error?: string };
+        if (!response.ok) throw new Error(data.error ?? 'Matchmaking ticket expired');
+        if (cancelled) return;
+        setMatch({
+          status: data.status === 'matched' ? 'matched' : 'waiting',
+          ticket,
+          roomId: data.roomId,
+          color: normalizeOnlineColor(data.color),
+          playersOnline: data.playersOnline ?? 1,
+          message: data.message ?? 'Waiting for an opponent…',
+        });
+        if (data.status !== 'matched') pollTimer = setTimeout(poll, 2000);
+      } catch (error) {
+        if (!cancelled) {
+          setMatch({
+            status: 'error',
+            playersOnline: 0,
+            message: error instanceof Error ? error.message : 'Could not reach matchmaking',
+          });
+        }
+      }
+    };
+
+    fetch(`${WORKER_PROXY}/matchmaking/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spinInterval: settings.spinInterval }),
+    })
+      .then(async response => {
+        const data = await response.json() as Partial<OnlineMatch> & { error?: string };
+        if (!response.ok) throw new Error(data.error ?? 'Could not join matchmaking');
+        ticket = data.ticket;
+        if (!cancelled) {
+          setMatch({
+            status: data.status === 'matched' ? 'matched' : 'waiting',
+            ticket,
+            roomId: data.roomId,
+            color: normalizeOnlineColor(data.color),
+            playersOnline: data.playersOnline ?? 1,
+            message: data.message ?? 'Waiting for an opponent…',
+          });
+        }
+        if (data.status !== 'matched') poll();
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setMatch({
+            status: 'error',
+            playersOnline: 0,
+            message: error instanceof Error ? error.message : 'Could not reach matchmaking',
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+      if (ticket) {
+        void fetch(`${WORKER_PROXY}/matchmaking/leave`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket }),
+          keepalive: true,
+        }).catch(() => undefined);
+      }
+    };
+  }, [settings.mode, settings.spinInterval]);
+
+  return match;
+}
+
+export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch) {
   const chessRef = useRef(new Chess());
   const [state, setState] = useState<GambitState>({
     fen: chessRef.current.fen(),
@@ -32,6 +132,7 @@ export function useGambitGame(settings: GameSettings) {
   const [pendingSpin, setPendingSpin] = useState<Color | null>(null);
   const [gameOver, setGameOver] = useState<{ isOver: boolean; result: string | null }>({ isOver: false, result: null });
   const [effectTargeting, setEffectTargeting] = useState<{ effect: EffectType; by: Color; step: number; selected: Square[] } | null>(null);
+  const onlineRoomRef = useRef<string | null>(null);
 
   const checkGameOver = useCallback((c: Chess) => {
     if (c.isCheckmate()) return { isOver: true, result: `${c.turn() === 'w' ? 'Black' : 'White'} won by checkmate` };
@@ -162,6 +263,24 @@ export function useGambitGame(settings: GameSettings) {
         };
       });
       setGameOver(checkGameOver(c));
+
+      if (settings.mode === 'online' && onlineMatch?.roomId && onlineMatch.color) {
+        const result = checkGameOver(c);
+        void fetch(`${WORKER_PROXY}/rooms/${onlineMatch.roomId}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            move,
+            color: onlineMatch.color === 'w' ? 'white' : 'black',
+            resultFen: c.fen(),
+            algebraic: moveRes.san,
+            captured: moveRes.captured,
+            status: result.isOver
+              ? result.result?.includes('checkmate') ? 'checkmate' : 'draw'
+              : 'playing',
+          }),
+        }).catch(() => undefined);
+      }
       
       // Tick effects for the NEW turn player (unless we skipped)
       if (c.turn() !== turn) {
@@ -171,7 +290,53 @@ export function useGambitGame(settings: GameSettings) {
       return true;
     }
     return false;
-  }, [getLegalMoves, settings.spinInterval, tickEffects, checkGameOver]);
+  }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch]);
+
+  // Matchmaking only releases the board once a room exists. Poll the
+  // authoritative room so two tabs see moves made by the other player.
+  useEffect(() => {
+    if (settings.mode !== 'online' || onlineMatch?.status !== 'matched' || !onlineMatch.roomId) return;
+    const roomId = onlineMatch.roomId;
+    onlineRoomRef.current = roomId;
+    let cancelled = false;
+
+    const sync = async () => {
+      try {
+        const response = await fetch(`${WORKER_PROXY}/rooms/${roomId}/state`);
+        if (!response.ok || cancelled) return;
+        const remote = await response.json() as {
+          fen: string;
+          moveCount: number;
+          status: string;
+          turn: 'white' | 'black';
+          spinEligibility: { white: number; black: number };
+        };
+        if (cancelled || remote.fen === chessRef.current.fen()) return;
+        chessRef.current.load(remote.fen);
+        const progress = {
+          w: Math.max(0, remote.spinEligibility.white - remote.moveCount),
+          b: Math.max(0, remote.spinEligibility.black - remote.moveCount),
+        };
+        setState(s => ({
+          ...s,
+          fen: remote.fen,
+          turn: chessRef.current.turn(),
+          spinProgress: progress,
+        }));
+        setGameOver(checkGameOver(chessRef.current));
+      } catch {
+        // The next poll retries transient network failures.
+      }
+    };
+
+    void sync();
+    const interval = setInterval(sync, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      if (onlineRoomRef.current === roomId) onlineRoomRef.current = null;
+    };
+  }, [settings.mode, onlineMatch?.roomId, onlineMatch?.status, checkGameOver]);
 
   const applyEffect = useCallback((effectType: EffectType, by: Color, targets: Square[] = [], revivedPiece?: PieceSymbol) => {
     const def = EFFECTS[effectType];
@@ -358,4 +523,10 @@ export function useGambitGame(settings: GameSettings) {
     setEffectTargeting,
     handleTargetClick,
   };
+}
+
+function normalizeOnlineColor(color: unknown): Color | undefined {
+  if (color === 'white' || color === 'w') return 'w';
+  if (color === 'black' || color === 'b') return 'b';
+  return undefined;
 }
