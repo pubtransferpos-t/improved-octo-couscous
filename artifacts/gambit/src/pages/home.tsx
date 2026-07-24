@@ -109,9 +109,24 @@ export default function Home() {
 
   const startGame = () => { _settings = settings; setLocation('/game'); };
 
-  const workerUrl = typeof localStorage !== 'undefined'
-    ? (localStorage.getItem('gambit_worker_url') ?? '')
-    : '';
+  const [workerUrl, setWorkerUrl] = useState<string>(
+    typeof localStorage !== 'undefined'
+      ? (localStorage.getItem('gambit_worker_url') ?? '')
+      : ''
+  );
+
+  // On mount, fetch the server-configured worker URL and auto-apply it
+  useEffect(() => {
+    fetch('/api/worker-url')
+      .then(r => r.json())
+      .then((data: { url: string | null }) => {
+        if (data.url) {
+          localStorage.setItem('gambit_worker_url', data.url);
+          setWorkerUrl(data.url);
+        }
+      })
+      .catch(() => { /* no API, use whatever's in localStorage */ });
+  }, []);
 
   return (
     <>

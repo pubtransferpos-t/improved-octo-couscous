@@ -1,0 +1,1 @@
+# Paste your Cloudflare Worker URL on the next line (no quotes, no spaces):
