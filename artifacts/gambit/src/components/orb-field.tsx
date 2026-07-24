@@ -10,11 +10,11 @@ const ORB_DEFS = [
 ];
 
 const RAINBOW = ['#ff2d78', '#ff6b00', '#ffee00', '#39ff14', '#00f5ff', '#bf5fff'];
-const BASE_SPEED = 2.4;
-const MIN_SPEED = BASE_SPEED * 0.75;
+const BASE_SPEED = 6.4;
+const MIN_SPEED = BASE_SPEED * .90;
 const FRICTION = 0.986;          // applied only above MIN_SPEED
 const EXPLODE_THRESHOLD = 6.0;   // relative speed (px/frame) needed for explosion chance
-const EXPLODE_CHANCE = 0.5;
+const EXPLODE_CHANCE = 0.49;
 
 interface Orb {
   x: number; y: number;
