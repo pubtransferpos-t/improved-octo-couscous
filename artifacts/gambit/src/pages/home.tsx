@@ -104,19 +104,30 @@ export default function Home() {
     });
   }, []);
 
-  const startGame = () => { _settings = settings; setLocation('/game'); };
+  const startGame = () => {
+    if (settings.mode === 'online' && !workerOnline) return;
+    _settings = settings;
+    setLocation('/game');
+  };
 
-  const [workerUrl, setWorkerUrl] = useState<string>(
-    typeof localStorage !== 'undefined'
-      ? (localStorage.getItem('gambit_worker_url') ?? '')
-      : ''
-  );
+  const [workerUrl, setWorkerUrl] = useState<string>('');
+  const [workerOnline, setWorkerOnline] = useState<boolean | null>(null);
 
-  // Always route multiplayer through the server proxy — the real worker URL stays server-side
+  // Check if the worker is actually up, then route through the proxy
   useEffect(() => {
-    const proxyUrl = `${window.location.origin}/api/worker-proxy`;
-    localStorage.setItem('gambit_worker_url', proxyUrl);
-    setWorkerUrl(proxyUrl);
+    fetch('/api/worker-status')
+      .then(r => r.json())
+      .then((data: { online: boolean }) => {
+        setWorkerOnline(data.online);
+        if (data.online) {
+          const proxyUrl = `${window.location.origin}/api/worker-proxy`;
+          localStorage.setItem('gambit_worker_url', proxyUrl);
+          setWorkerUrl(proxyUrl);
+        } else {
+          localStorage.removeItem('gambit_worker_url');
+        }
+      })
+      .catch(() => setWorkerOnline(false));
   }, []);
 
   return (
@@ -233,7 +244,24 @@ export default function Home() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
               {MODES.map(mode => {
                 const active = settings.mode === mode.id;
-                return <ModeCard key={mode.id} label={mode.label} desc={mode.desc} active={active} color={mode.color} onClick={() => setSettings(s => ({ ...s, mode: mode.id }))} />;
+                const offline = mode.id === 'online' && workerOnline === false;
+                const checking = mode.id === 'online' && workerOnline === null;
+                const desc = offline
+                  ? 'Server offline'
+                  : checking
+                  ? 'Checking server…'
+                  : mode.desc;
+                return (
+                  <ModeCard
+                    key={mode.id}
+                    label={mode.label}
+                    desc={desc}
+                    active={active}
+                    color={mode.color}
+                    disabled={offline}
+                    onClick={() => { if (!offline) setSettings(s => ({ ...s, mode: mode.id })); }}
+                  />
+                );
               })}
             </div>
           </section>
@@ -375,33 +403,35 @@ export default function Home() {
 
 /* ── Sub-components ─────────────────────────────────────────────────────── */
 
-function ModeCard({ label, desc, active, color, onClick }: {
-  label: string; desc: string; active: boolean; color: string; onClick: () => void;
+function ModeCard({ label, desc, active, color, disabled, onClick }: {
+  label: string; desc: string; active: boolean; color: string; disabled?: boolean; onClick: () => void;
 }) {
   const [hov, setHov] = useState(false);
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => setHov(true)}
+      onMouseEnter={() => !disabled && setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
         display:'block', textAlign:'left', padding:'13px 15px',
-        background: active ? `${color}16` : hov ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.01)',
-        border:`2px solid ${active ? color : hov ? `${color}55` : 'rgba(255,255,255,0.07)'}`,
+        background: disabled ? 'rgba(255,255,255,0.01)' : active ? `${color}16` : hov ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.01)',
+        border:`2px solid ${disabled ? 'rgba(255,255,255,0.04)' : active ? color : hov ? `${color}55` : 'rgba(255,255,255,0.07)'}`,
         borderRadius:14,
-        transform: active ? 'scale(1.02)' : hov ? 'scale(1.01)' : 'scale(1)',
-        boxShadow: active ? `0 0 22px ${color}44, 0 4px 18px rgba(0,0,0,0.3)` : 'none',
+        opacity: disabled ? 0.38 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        transform: !disabled && active ? 'scale(1.02)' : !disabled && hov ? 'scale(1.01)' : 'scale(1)',
+        boxShadow: !disabled && active ? `0 0 22px ${color}44, 0 4px 18px rgba(0,0,0,0.3)` : 'none',
         transition:'all 0.18s cubic-bezier(0.34,1.56,0.64,1)',
       }}
     >
       <div style={{
         fontFamily:'"Boogaloo", sans-serif', fontSize:'1.05rem',
-        color: active ? color : hov ? '#f0f0ff' : 'rgba(240,240,255,0.75)',
+        color: disabled ? 'rgba(240,240,255,0.35)' : active ? color : hov ? '#f0f0ff' : 'rgba(240,240,255,0.75)',
         marginBottom:2,
       }}>{label}</div>
       <div style={{
         fontFamily:'"Boogaloo", sans-serif', fontSize:'0.78rem',
-        color:'rgba(200,190,255,0.38)', lineHeight:1.3,
+        color: disabled ? 'rgba(255,80,80,0.5)' : 'rgba(200,190,255,0.38)', lineHeight:1.3,
       }}>{desc}</div>
     </button>
   );
