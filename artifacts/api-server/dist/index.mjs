@@ -32582,21 +32582,30 @@ function readWorkerUrl() {
 }
 router2.get("/worker-url", (_req, res) => {
   const url = readWorkerUrl();
-  if (!url) return res.json({ url: null });
+  if (!url) {
+    res.json({ url: null });
+    return;
+  }
   res.json({ url });
+  return;
 });
 router2.get("/worker-status", async (_req, res) => {
   const url = readWorkerUrl();
-  if (!url) return res.json({ online: false, reason: "no_url" });
+  if (!url) {
+    res.json({ online: false, reason: "no_url" });
+    return;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4e3);
   try {
     await fetch(url, { method: "GET", signal: controller.signal });
     clearTimeout(timer);
     res.json({ online: true });
+    return;
   } catch {
     clearTimeout(timer);
     res.json({ online: false, reason: "unreachable" });
+    return;
   }
 });
 var worker_url_default = router2;
@@ -32621,7 +32630,8 @@ async function proxyToWorker(req, res) {
     res.status(503).json({ error: "Multiplayer not configured" });
     return;
   }
-  const suffix = req.params[0] ?? "";
+  const rawSuffix = req.params.path;
+  const suffix = Array.isArray(rawSuffix) ? rawSuffix.join("/") : rawSuffix ?? "";
   const targetUrl = `${workerBase.replace(/\/$/, "")}/${suffix}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`;
   const headers = { "Content-Type": "application/json" };
   try {

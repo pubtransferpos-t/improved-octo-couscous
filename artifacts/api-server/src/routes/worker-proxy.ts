@@ -26,8 +26,14 @@ async function proxyToWorker(req: Request, res: Response) {
     return;
   }
 
-  // Strip /api/worker-proxy prefix, forward the rest
-  const suffix = req.params[0] ?? "";
+  // Strip /api/worker-proxy prefix, forward the rest.
+  // Express 5 (path-to-regexp v6) puts a named wildcard's matched segments
+  // in req.params.path as an array, NOT req.params[0] (that was Express 4).
+  const rawSuffix = req.params.path;
+  const suffix = Array.isArray(rawSuffix)
+    ? rawSuffix.join("/")
+    : (rawSuffix ?? "");
+
   const targetUrl = `${workerBase.replace(/\/$/, "")}/${suffix}${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
