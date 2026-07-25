@@ -34,6 +34,7 @@ export default function Game() {
     state, chess, pendingSpin, setPendingSpin,
     gameOver, makeMove, getLegalMoves,
     initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
+    forceSync, syncCooldown,
   } = useGambitGame(settings, onlineMatch);
 
   useEffect(() => {
@@ -123,6 +124,8 @@ export default function Game() {
   const boardOrientation: Color | null =
     settings.mode === 'pass-and-play' || settings.mode === 'custom' ? null : playerColor;
 
+  const isOnline = settings.mode === 'online';
+
   return (
     <div style={{ minHeight: '100vh', background: '#0d0a1a', color: '#f0f0ff', display: 'flex', flexDirection: 'column', fontFamily: '"Boogaloo", sans-serif' }}>
 
@@ -185,6 +188,9 @@ export default function Game() {
           state={state}
           isActive={state.turn === 'b' && !gameOver.isOver}
           botThinking={botThinking && settings.mode === 'bot' && state.turn === 'b'}
+          isLocalPlayer={isOnline && playerColor === 'b'}
+          forceSync={isOnline && playerColor === 'b' ? forceSync : undefined}
+          syncCooldown={isOnline && playerColor === 'b' ? syncCooldown : 0}
         />
 
         <ChessBoard
@@ -203,6 +209,9 @@ export default function Game() {
           state={state}
           isActive={state.turn === 'w' && !gameOver.isOver}
           botThinking={botThinking && settings.mode === 'bot' && state.turn === 'w'}
+          isLocalPlayer={isOnline && playerColor === 'w'}
+          forceSync={isOnline && playerColor === 'w' ? forceSync : undefined}
+          syncCooldown={isOnline && playerColor === 'w' ? syncCooldown : 0}
         />
       </div>
 
@@ -375,13 +384,24 @@ function MatchmakingScreen({ match, onCancel }: {
 
 const PLAYER_COLORS = { w: '#ffee00', b: '#00f5ff' };
 
-function PlayerBar({ color, state, isActive, botThinking }: {
-  color: Color; state: GambitState; isActive: boolean; botThinking: boolean;
+function PlayerBar({
+  color, state, isActive, botThinking,
+  isLocalPlayer, forceSync, syncCooldown,
+}: {
+  color: Color;
+  state: GambitState;
+  isActive: boolean;
+  botThinking: boolean;
+  isLocalPlayer?: boolean;
+  forceSync?: () => void;
+  syncCooldown?: number;
 }) {
   const effects = state.activeEffects[color];
   const captured = state.capturedPieces.filter(p => p.color !== color);
   const movesLeft = state.spinProgress[color];
   const pc = PLAYER_COLORS[color];
+
+  const onCooldown = (syncCooldown ?? 0) > 0;
 
   return (
     <div style={{
@@ -394,6 +414,7 @@ function PlayerBar({ color, state, isActive, botThinking }: {
       transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Left: player identity */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: '1.2rem', filter: isActive ? `drop-shadow(0 0 8px ${pc})` : 'none' }}>
             {color === 'w' ? '♔' : '♚'}
@@ -403,6 +424,13 @@ function PlayerBar({ color, state, isActive, botThinking }: {
             color: isActive ? pc : 'rgba(200,190,255,0.6)',
           }}>
             {color === 'w' ? 'White' : 'Black'}
+            {isLocalPlayer && (
+              <span style={{
+                marginLeft: 6,
+                fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem',
+                color: pc, opacity: 0.7, verticalAlign: 'middle',
+              }}>YOU</span>
+            )}
           </span>
           {botThinking && (
             <span style={{
@@ -418,9 +446,36 @@ function PlayerBar({ color, state, isActive, botThinking }: {
               display: 'inline-block',
             }} className="animate-blink" />
           )}
+
+          {/* Problem button — only shown for the local player in online mode */}
+          {isLocalPlayer && forceSync && (
+            <button
+              onClick={forceSync}
+              disabled={onCooldown}
+              title={onCooldown
+                ? `Sync available in ${syncCooldown}s`
+                : 'Something look wrong? Force a sync with the server'}
+              style={{
+                marginLeft: 4,
+                padding: '2px 8px',
+                fontFamily: '"Boogaloo", sans-serif', fontSize: '0.78rem',
+                background: onCooldown
+                  ? 'rgba(255,255,255,0.04)'
+                  : 'rgba(255,153,0,0.15)',
+                border: `1px solid ${onCooldown ? 'rgba(255,255,255,0.12)' : 'rgba(255,153,0,0.45)'}`,
+                borderRadius: 8,
+                color: onCooldown ? 'rgba(200,190,255,0.3)' : '#ff9900',
+                cursor: onCooldown ? 'default' : 'pointer',
+                transition: 'all 0.15s',
+                lineHeight: 1.4,
+              }}
+            >
+              {onCooldown ? `⏳ ${syncCooldown}s` : '⚠ Problem?'}
+            </button>
+          )}
         </div>
 
-        {/* Spin countdown */}
+        {/* Right: spin countdown */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: '"VT323", monospace', fontSize: '1.1rem', color: 'rgba(200,190,255,0.5)' }}>
             🎰 {movesLeft}

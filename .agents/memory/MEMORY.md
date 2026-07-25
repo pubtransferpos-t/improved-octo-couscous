@@ -1,0 +1,3 @@
+- [Online spin authority](online-spin-authority.md) — applyEffect must POST to /rooms/:id/effect or spinEligibility never advances; server handles per-effect eligibility.
+- [Move server authority](move-server-authority.md) — POST /move response body is the authoritative state; use it directly, not a follow-up GET.
+- [Worker redeploy required](worker-redeploy.md) — chess.js validation + spinEligibility fix in game-room.ts require a Cloudflare Worker redeploy to take effect in production.

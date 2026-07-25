@@ -3,6 +3,8 @@
  * Each room holds authoritative game state for two online players.
  */
 
+import { Chess } from 'chess.js';
+
 export interface Move {
   from: string;
   to: string;
@@ -30,7 +32,7 @@ export interface RoomState {
   };
   activeEffects: ActiveEffect[];
   spinEligibility: {
-    white: number; // move count at which white next earns a spin (0 = eligible now)
+    white: number; // moveCount at which white next earns a spin
     black: number;
   };
   status: "waiting" | "playing" | "checkmate" | "stalemate" | "draw" | "resigned";
@@ -185,38 +187,83 @@ export class GameRoom {
       return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
     }
     if (room.status !== "playing") {
-      return new Response(JSON.stringify({ error: "Game is not active" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Game is not active", room }), { status: 400 });
     }
 
-    const body = await request.json<{ move: Move; color: "white" | "black" }>();
-    const { move, color } = body;
-
-    if (color !== room.turn) {
-      return new Response(JSON.stringify({ error: "Not your turn" }), { status: 400 });
-    }
-
-    // Store FEN snapshot before this move
-    room.fenHistory.push(room.fen);
-
-    // We trust the client for move validation (chess.js runs on client).
-    // The Worker stores the resulting FEN the client sends.
-    const body2 = body as unknown as {
+    type MoveBody = {
       move: Move;
       color: "white" | "black";
-      resultFen: string;
-      algebraic: string;
+      resultFen?: string;
+      algebraic?: string;
       captured?: string;
       status?: "playing" | "checkmate" | "stalemate" | "draw";
     };
+    const body = await request.json<MoveBody>();
+    const { move, color } = body;
 
-    room.fen = body2.resultFen;
-    room.moveHistory.push(body2.algebraic);
-    room.moveCount += 1;
+    // Record pre-move FEN for undo history
+    room.fenHistory.push(room.fen);
 
-    // Track captured piece
-    if (body2.captured) {
-      room.capturedPieces[color].push(body2.captured);
+    // Attempt server-side move validation using chess.js.
+    // This is the authoritative path for ordinary moves.
+    const chess = new Chess(room.fen);
+    let moveResult: ReturnType<typeof chess.move> | null = null;
+    try {
+      moveResult = chess.move({
+        from: move.from,
+        to: move.to,
+        promotion: move.promotion,
+      });
+    } catch {
+      moveResult = null;
     }
+
+    if (moveResult) {
+      // ── Server-validated path ──────────────────────────────────────────────
+      // Use the FEN computed by the server's chess.js as the authoritative state.
+      room.fen = chess.fen();
+      room.moveHistory.push(moveResult.san);
+      if (moveResult.captured) {
+        room.capturedPieces[color].push(moveResult.captured);
+      }
+      // Derive turn from the post-move FEN (handles castling, en-passant, etc.)
+      room.turn = chess.turn() === "w" ? "white" : "black";
+
+      // Check server-side game termination
+      if (chess.isCheckmate()) {
+        room.status = "checkmate";
+        room.winner = color;
+      } else if (chess.isStalemate()) {
+        room.status = "stalemate";
+      } else if (chess.isDraw()) {
+        room.status = "draw";
+      }
+    } else if (body.resultFen) {
+      // ── Effect-modified path ───────────────────────────────────────────────
+      // chess.js couldn't validate the move against the server FEN — most
+      // likely because a client-side effect (e.g. skip_turn, extra_turn)
+      // already mutated the active turn before the client sent this move.
+      // Trust the client-supplied resultFen for these cases.
+      room.fen = body.resultFen;
+      if (body.algebraic) room.moveHistory.push(body.algebraic);
+      if (body.captured) room.capturedPieces[color].push(body.captured);
+      // Parse the active turn from the FEN string
+      const fenTurn = body.resultFen.split(" ")[1];
+      room.turn = fenTurn === "w" ? "white" : "black";
+      // Accept client-reported game status
+      if (body.status && body.status !== "playing") {
+        room.status = body.status;
+        if (body.status === "checkmate") room.winner = color;
+      }
+    } else {
+      // Neither valid nor has a fallback FEN — reject and undo the history push
+      room.fenHistory.pop();
+      return cors(
+        new Response(JSON.stringify({ error: "Invalid move", room }), { status: 400 })
+      );
+    }
+
+    room.moveCount += 1;
 
     // Tick down active effects for the player who just moved
     room.activeEffects = room.activeEffects
@@ -227,23 +274,6 @@ export class GameRoom {
         return e;
       })
       .filter((e) => e.turnsRemaining > 0);
-
-    // Update spin eligibility
-    if (room.moveCount >= room.spinEligibility[color]) {
-      // Keep it at current — client knows to show spin button
-      // After spin is used, client sends effect which advances it
-    }
-
-    // Switch turn
-    room.turn = color === "white" ? "black" : "white";
-
-    // Update game status
-    if (body2.status && body2.status !== "playing") {
-      room.status = body2.status;
-      if (body2.status === "checkmate") {
-        room.winner = color; // The player who just moved caused checkmate
-      }
-    }
 
     room.lastActivity = Date.now();
     await this.saveRoom(room);
@@ -272,16 +302,19 @@ export class GameRoom {
     if (resultFen) {
       room.fenHistory.push(room.fen);
       room.fen = resultFen;
+      // Parse turn from new FEN
+      const fenTurn = resultFen.split(" ")[1];
+      room.turn = fenTurn === "w" ? "white" : "black";
     }
 
     // Register timed effect if applicable
     const timedEffects: Record<string, { turns: number; targetColor: "white" | "black" }> = {
-      shield: { turns: 3, targetColor: color },
-      freeze: { turns: 2, targetColor: color === "white" ? "black" : "white" },
-      queen_downgrade: { turns: 3, targetColor: color === "white" ? "black" : "white" },
-      skip_turn: { turns: 1, targetColor: color === "white" ? "black" : "white" },
-      block_nerf: { turns: 1, targetColor: color },
-      force_pawn: { turns: 1, targetColor: color === "white" ? "black" : "white" },
+      shield_piece:      { turns: 2, targetColor: color },
+      freeze_piece:      { turns: 2, targetColor: color === "white" ? "black" : "white" },
+      downgrade_queen:   { turns: 3, targetColor: color === "white" ? "black" : "white" },
+      skip_turn:         { turns: 1, targetColor: color === "white" ? "black" : "white" },
+      block_nerf:        { turns: 1, targetColor: color },
+      force_pawn:        { turns: 1, targetColor: color === "white" ? "black" : "white" },
     };
 
     if (timedEffects[effect.type]) {
@@ -300,7 +333,10 @@ export class GameRoom {
       room.spinEligibility[opp] += 5;
     }
 
-    // Advance spin eligibility for the player who just used their spin
+    // Advance spin eligibility for the player who just used their spin.
+    // This is the critical step that prevents "spin every turn" — the next
+    // eligible spin count is pushed forward by spinInterval from the current
+    // moveCount.
     const effectiveSpin = spinInterval ?? DEFAULT_SPIN_INTERVAL;
     room.spinEligibility[color] = room.moveCount + effectiveSpin;
 

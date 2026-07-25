@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Chess, Move, Square, PieceSymbol, Color } from 'chess.js';
-import { EFFECTS, EffectType, GambitState, ActiveEffect, generateId, getPieces, getAllSquares } from './gambit-engine';
+import { EFFECTS, EffectType, GambitState, generateId, getPieces } from './gambit-engine';
 
 export interface GameSettings {
   mode: 'bot' | 'pass-and-play' | 'custom' | 'online';
@@ -28,6 +28,23 @@ export interface OnlineMatch {
 }
 
 const WORKER_PROXY = '/api/worker-proxy';
+
+/** Shape of the room state returned by every Worker endpoint. */
+interface ServerRoom {
+  fen: string;
+  moveCount: number;
+  status: string;
+  turn: 'white' | 'black';
+  spinEligibility: { white: number; black: number };
+}
+
+/** Derive client-side spin progress from authoritative server state. */
+function serverProgress(room: ServerRoom): { w: number; b: number } {
+  return {
+    w: Math.max(0, room.spinEligibility.white - room.moveCount),
+    b: Math.max(0, room.spinEligibility.black - room.moveCount),
+  };
+}
 
 export function useOnlineMatch(settings: GameSettings): OnlineMatch {
   const [match, setMatch] = useState<OnlineMatch>({
@@ -118,6 +135,8 @@ export function useOnlineMatch(settings: GameSettings): OnlineMatch {
   return match;
 }
 
+const FORCE_SYNC_COOLDOWN_S = 10;
+
 export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch) {
   const chessRef = useRef(new Chess());
   const [state, setState] = useState<GambitState>({
@@ -132,10 +151,39 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
   const [pendingSpin, setPendingSpin] = useState<Color | null>(null);
   const [gameOver, setGameOver] = useState<{ isOver: boolean; result: string | null }>({ isOver: false, result: null });
   const [effectTargeting, setEffectTargeting] = useState<{ effect: EffectType; by: Color; step: number; selected: Square[] } | null>(null);
-  const onlineRoomRef = useRef<string | null>(null);
-  // Exposed so makeMove can trigger an immediate re-sync after posting a move.
-  const onlineSyncRef = useRef<(() => void) | null>(null);
 
+  // ── Online sync infrastructure ─────────────────────────────────────────────
+  const onlineRoomRef = useRef<string | null>(null);
+  /** Exposed so makeMove can trigger an immediate re-sync after posting. */
+  const onlineSyncRef = useRef<(() => void) | null>(null);
+  /**
+   * Tracks the last server-reported spinProgress so we can detect the
+   * transition from > 0 → ≤ 0 and fire setPendingSpin exactly once,
+   * without calling it inside a setState callback (which React may call
+   * twice in strict mode).
+   */
+  const lastServerProgress = useRef<{ w: number; b: number } | null>(null);
+
+  // ── Force-sync (Problem button) ────────────────────────────────────────────
+  const [syncCooldown, setSyncCooldown] = useState(0);
+  const lastSyncPressRef = useRef(0);
+
+  // Tick the cooldown counter down every second while active.
+  useEffect(() => {
+    if (syncCooldown <= 0) return;
+    const t = setTimeout(() => setSyncCooldown(s => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [syncCooldown]);
+
+  const forceSync = useCallback(() => {
+    const elapsed = (Date.now() - lastSyncPressRef.current) / 1000;
+    if (elapsed < FORCE_SYNC_COOLDOWN_S) return; // still cooling down
+    lastSyncPressRef.current = Date.now();
+    setSyncCooldown(FORCE_SYNC_COOLDOWN_S);
+    onlineSyncRef.current?.();
+  }, []);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const checkGameOver = useCallback((c: Chess) => {
     if (c.isCheckmate()) return { isOver: true, result: `${c.turn() === 'w' ? 'Black' : 'White'} won by checkmate` };
     if (c.isStalemate()) return { isOver: true, result: 'Draw by stalemate' };
@@ -153,6 +201,32 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     setGameOver(checkGameOver(c));
   }, [checkGameOver]);
 
+  /**
+   * Apply authoritative server room state to local React state.
+   * Also handles spin-wheel trigger detection.
+   */
+  const applyServerRoom = useCallback((room: ServerRoom, myColor: Color | undefined) => {
+    const progress = serverProgress(room);
+
+    // Detect spin eligibility transition: was > 0, now ≤ 0 → trigger wheel.
+    if (myColor) {
+      const prev = lastServerProgress.current;
+      if (progress[myColor] <= 0 && (!prev || prev[myColor] > 0)) {
+        setPendingSpin(myColor);
+      }
+    }
+    lastServerProgress.current = progress;
+
+    chessRef.current.load(room.fen);
+    setState(s => ({
+      ...s,
+      fen: room.fen,
+      turn: chessRef.current.turn(),
+      spinProgress: progress,
+    }));
+    setGameOver(checkGameOver(chessRef.current));
+  }, [checkGameOver]);
+
   const tickEffects = useCallback((color: Color) => {
     setState(s => {
       const newEffects = { ...s.activeEffects };
@@ -161,13 +235,12 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     });
   }, []);
 
-  // Filter legal moves based on active effects
+  // ── Legal move filtering ────────────────────────────────────────────────────
   const getLegalMoves = useCallback((square?: Square) => {
     const c = chessRef.current;
     const turn = c.turn();
     const opp = turn === 'w' ? 'b' : 'w';
     
-    // Check force pawn effect
     const forcePawnEffect = state.activeEffects[turn].find(e => e.type === 'force_pawn');
     let moves = c.moves({ square, verbose: true }) as Move[];
 
@@ -176,16 +249,13 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       if (pawnMoves.length > 0) moves = pawnMoves;
     }
 
-    // Filter out frozen pieces
     const frozenSquares = state.activeEffects[turn].filter(e => e.type === 'freeze_piece').flatMap(e => e.targetSquares);
     moves = moves.filter(m => !frozenSquares.includes(m.from as Square));
 
-    // Filter Queen downgrade
     const queenDowngrade = state.activeEffects[turn].find(e => e.type === 'downgrade_queen');
     if (queenDowngrade) {
       moves = moves.filter(m => {
         if (m.piece !== 'q') return true;
-        // Queen moves like a rook: rank or file must be same
         const fromFile = m.from[0];
         const fromRank = m.from[1];
         const toFile = m.to[0];
@@ -194,11 +264,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       });
     }
 
-    // Filter shielded captures
     const shieldedSquares = state.activeEffects[opp].filter(e => e.type === 'shield_piece').flatMap(e => e.targetSquares);
     moves = moves.filter(m => {
       if (m.flags.includes('c') || m.flags.includes('e')) {
-        // if capture, check if target square is shielded
         if (shieldedSquares.includes(m.to as Square)) return false;
       }
       return true;
@@ -207,6 +275,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     return moves;
   }, [state.activeEffects]);
 
+  // ── makeMove ────────────────────────────────────────────────────────────────
   const makeMove = useCallback((move: { from: string, to: string, promotion?: string }) => {
     const moves = getLegalMoves(move.from as Square);
     const validMove = moves.find(m => m.to === move.to && (!move.promotion || m.promotion === move.promotion));
@@ -218,7 +287,6 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     const moveRes = c.move(validMove);
     
     if (moveRes) {
-      // Capture tracking
       let captured: { type: PieceSymbol; color: Color } | null = null;
       if (moveRes.captured) {
         captured = { type: moveRes.captured, color: turn === 'w' ? 'b' : 'w' };
@@ -227,8 +295,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       setState(s => {
         const nextTurn = c.turn();
 
-        // In online mode the server is the authoritative source for spin
-        // progress; do not locally decrement — the sync will apply it.
+        // In online mode, spinProgress is driven entirely by the server.
+        // We do NOT decrement it locally — the POST /move response or the
+        // periodic sync will apply the authoritative values.
         let newProgress = { ...s.spinProgress };
         if (settings.mode !== 'online') {
           newProgress[turn] -= 1;
@@ -240,21 +309,17 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
 
         const newCaptured = captured ? [...s.capturedPieces, captured] : s.capturedPieces;
 
-        // Skip turn effect applied to next player?
         const skipTurnEffect = s.activeEffects[nextTurn].find(e => e.type === 'skip_turn');
-        let finalTurn = nextTurn;
         let finalFen = c.fen();
         let effects = { ...s.activeEffects };
 
         if (skipTurnEffect) {
-          // Remove skip turn, flip turn back
           effects[nextTurn] = effects[nextTurn].filter(e => e.id !== skipTurnEffect.id);
           const tokens = c.fen().split(' ');
-          tokens[1] = turn; // switch turn back
-          tokens[3] = '-'; // clear en passant
+          tokens[1] = turn;
+          tokens[3] = '-';
           c.load(tokens.join(' '));
           finalFen = c.fen();
-          tickEffects(turn); // tick again since they get another turn immediately? Actually no, skip turn means opponent loses their turn, so we just pass it back. Let's just manually flip.
         }
 
         return {
@@ -270,13 +335,16 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       setGameOver(checkGameOver(c));
 
       if (settings.mode === 'online' && onlineMatch?.roomId && onlineMatch.color) {
+        const myColor = onlineMatch.color;
+        const roomId = onlineMatch.roomId;
         const result = checkGameOver(c);
-        void fetch(`${WORKER_PROXY}/rooms/${onlineMatch.roomId}/move`, {
+
+        void fetch(`${WORKER_PROXY}/rooms/${roomId}/move`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             move,
-            color: onlineMatch.color === 'w' ? 'white' : 'black',
+            color: myColor === 'w' ? 'white' : 'black',
             resultFen: c.fen(),
             algebraic: moveRes.san,
             captured: moveRes.captured,
@@ -285,14 +353,21 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
               : 'playing',
           }),
         })
-          // Immediately re-sync after the server has processed the move so
-          // the mover's own screen shows the updated spin counters without
-          // waiting for the next 2-second poll interval.
-          .then(() => onlineSyncRef.current?.())
-          .catch(() => undefined);
+          .then(async res => {
+            if (!res.ok) {
+              // Server rejected or had an error — force a GET sync to correct drift
+              onlineSyncRef.current?.();
+              return;
+            }
+            // Use the server's authoritative response body directly.
+            // This is faster than a follow-up GET and ensures the mover's
+            // screen immediately snaps to the server's view of the position.
+            const room = await res.json() as ServerRoom;
+            applyServerRoom(room, myColor);
+          })
+          .catch(() => onlineSyncRef.current?.());
       }
       
-      // Tick effects for the NEW turn player (unless we skipped)
       if (c.turn() !== turn) {
         tickEffects(c.turn());
       }
@@ -300,57 +375,45 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       return true;
     }
     return false;
-  }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch]);
+  }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch, applyServerRoom]);
 
-  // Matchmaking only releases the board once a room exists. Poll the
-  // authoritative room so two tabs see moves made by the other player.
+  // ── Online room poll ────────────────────────────────────────────────────────
+  // Polls every 2 seconds so each client sees moves made by the opponent.
   useEffect(() => {
     if (settings.mode !== 'online' || onlineMatch?.status !== 'matched' || !onlineMatch.roomId) return;
     const roomId = onlineMatch.roomId;
     onlineRoomRef.current = roomId;
     let cancelled = false;
 
-    const myColor = onlineMatch?.color; // 'w' | 'b' | undefined
+    const myColor = onlineMatch?.color;
 
     const sync = async () => {
       try {
         const response = await fetch(`${WORKER_PROXY}/rooms/${roomId}/state`);
         if (!response.ok || cancelled) return;
-        const remote = await response.json() as {
-          fen: string;
-          moveCount: number;
-          status: string;
-          turn: 'white' | 'black';
-          spinEligibility: { white: number; black: number };
-        };
+        const remote = await response.json() as ServerRoom;
         if (cancelled) return;
 
-        // Always sync spin progress from the server — it is the source of
-        // truth and both clients must agree on the same numbers.
-        const progress = {
-          w: Math.max(0, remote.spinEligibility.white - remote.moveCount),
-          b: Math.max(0, remote.spinEligibility.black - remote.moveCount),
-        };
+        const progress = serverProgress(remote);
 
-        // Trigger the spin wheel for the local player when the server says
-        // their counter has reached zero. Use a functional-setState read to
-        // avoid triggering duplicate spins.
+        // Trigger spin wheel when server-reported progress transitions to ≤ 0.
+        // Using a ref avoids calling setState inside setState and prevents
+        // duplicate triggers on React strict-mode double invocations.
         if (myColor) {
-          setState(s => {
-            const wasEligible = s.spinProgress[myColor] <= 0;
-            if (!wasEligible && progress[myColor] <= 0) {
-              setPendingSpin(myColor);
-            }
-            return s; // state shape unchanged here — full update follows
-          });
+          const prev = lastServerProgress.current;
+          if (progress[myColor] <= 0 && (!prev || prev[myColor] > 0)) {
+            setPendingSpin(myColor);
+          }
         }
+        lastServerProgress.current = progress;
 
         if (remote.fen === chessRef.current.fen()) {
-          // Board is already current; only refresh spin counters.
+          // Board position matches — only refresh spin counters.
           setState(s => ({ ...s, spinProgress: progress }));
           return;
         }
 
+        // New position from opponent's move — apply fully.
         chessRef.current.load(remote.fen);
         setState(s => ({
           ...s,
@@ -360,7 +423,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         }));
         setGameOver(checkGameOver(chessRef.current));
       } catch {
-        // The next poll retries transient network failures.
+        // Transient network error — next poll will retry.
       }
     };
 
@@ -375,6 +438,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     };
   }, [settings.mode, onlineMatch?.roomId, onlineMatch?.status, onlineMatch?.color, checkGameOver]);
 
+  // ── applyEffect ─────────────────────────────────────────────────────────────
   const applyEffect = useCallback((effectType: EffectType, by: Color, targets: Square[] = [], revivedPiece?: PieceSymbol) => {
     const def = EFFECTS[effectType];
     const targetColor = def.category === 'buff' ? by : (by === 'w' ? 'b' : 'w');
@@ -384,13 +448,12 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     if (def.category === 'nerf') {
       const wardIdx = state.activeEffects[targetColor].findIndex(e => e.type === 'block_nerf');
       if (wardIdx >= 0) {
-        // Consume ward and block
         setState(s => {
           const newEffects = { ...s.activeEffects };
           newEffects[targetColor] = newEffects[targetColor].filter((_, i) => i !== wardIdx);
           return { ...s, activeEffects: newEffects };
         });
-        return; // Blocked!
+        return;
       }
     }
 
@@ -408,10 +471,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         }
       }));
     } else {
-      // Immediate effects
       if (effectType === 'extra_turn') {
         const tokens = c.fen().split(' ');
-        tokens[1] = by; // stay their turn
+        tokens[1] = by;
         tokens[3] = '-';
         c.load(tokens.join(' '));
         updateState();
@@ -445,7 +507,6 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       else if (effectType === 'shuffle_pieces') {
         const pieces = getPieces(c, targetColor).filter(sq => c.get(sq)?.type !== 'k');
         if (pieces.length >= 2) {
-          // just pick 2 random
           const p1 = pieces[Math.floor(Math.random() * pieces.length)];
           let p2 = pieces[Math.floor(Math.random() * pieces.length)];
           while (p2 === p1) p2 = pieces[Math.floor(Math.random() * pieces.length)];
@@ -456,7 +517,6 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
             c.remove(p1); c.remove(p2);
             c.put(piece1, p2); c.put(piece2, p1);
             if (c.isCheck()) {
-              // revert if illegal check
               c.remove(p1); c.remove(p2);
               c.put(piece1, p1); c.put(piece2, p2);
             }
@@ -483,7 +543,6 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       }
       else if (effectType === 'revive_piece' && targets.length === 1 && revivedPiece) {
         c.put({ type: revivedPiece, color: by }, targets[0]);
-        // remove from captured
         setState(s => {
           const cap = [...s.capturedPieces];
           const idx = cap.findIndex(p => p.color === by && p.type === revivedPiece);
@@ -493,7 +552,41 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         updateState();
       }
     }
-  }, [state, updateState]);
+
+    // ── Post effect to server in online mode ──────────────────────────────
+    // Critical: the server must advance spinEligibility after every spin.
+    // Without this POST, spinEligibility never moves forward and the player
+    // gets the spin wheel on every single move ("spin every turn" bug).
+    if (settings.mode === 'online' && onlineMatch?.roomId && onlineMatch.color) {
+      const serverColor = onlineMatch.color === 'w' ? 'white' : 'black';
+      const roomId = onlineMatch.roomId;
+
+      void fetch(`${WORKER_PROXY}/rooms/${roomId}/effect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          effect: { type: effectType },
+          color: serverColor,
+          // Send the post-effect FEN for board-changing effects so the
+          // server stays in sync with position modifications.
+          resultFen: chessRef.current.fen(),
+          spinInterval: settings.spinInterval,
+        }),
+      })
+        .then(async res => {
+          if (!res.ok) return;
+          const room = await res.json() as ServerRoom;
+          // Apply the server's updated spinEligibility so both clients
+          // now see the correct next-spin countdown.
+          const progress = serverProgress(room);
+          // Reset the spin-trigger ref so the next eligibility transition
+          // is detected cleanly (the wheel was just consumed).
+          lastServerProgress.current = progress;
+          setState(s => ({ ...s, spinProgress: progress }));
+        })
+        .catch(() => onlineSyncRef.current?.());
+    }
+  }, [state, updateState, settings.mode, settings.spinInterval, onlineMatch]);
 
   const initiateEffect = useCallback((effectType: EffectType, by: Color) => {
     const def = EFFECTS[effectType];
@@ -527,14 +620,12 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       if (def.targetRule === 'two_own_pieces' && newSelected.length < 2) {
         setEffectTargeting({ ...effectTargeting, step: 1, selected: newSelected });
       } else {
-        // Need to handle revive piece specific flow (picking which piece to revive)
-        // For simplicity, we auto-pick the highest value captured piece for Revive.
         let revived: PieceSymbol | undefined;
         if (effect === 'revive_piece') {
           const caps = state.capturedPieces.filter(p => p.color === by);
           if (caps.length === 0) {
             setEffectTargeting(null);
-            return; // Can't revive if nothing captured
+            return;
           }
           const vals: Record<PieceSymbol, number> = { q:9, r:5, b:3, n:3, p:1, k:0 };
           caps.sort((a,b) => vals[b.type] - vals[a.type]);
@@ -559,6 +650,8 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     effectTargeting,
     setEffectTargeting,
     handleTargetClick,
+    forceSync,
+    syncCooldown,
   };
 }
 
