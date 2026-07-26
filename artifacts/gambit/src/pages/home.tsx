@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useFullscreen } from '@/hooks/use-fullscreen';
 import { useLocation } from 'wouter';
 import { GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
 import { EFFECTS, EffectType } from '@/hooks/gambit-engine';
@@ -47,6 +48,7 @@ interface Star { id: number; x: number; y: number; }
 
 export default function Home() {
   const [, setLocation] = useLocation();
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   const [settings, setSettings] = useState<GameSettings>({ ..._settings });
   const [showEffects, setShowEffects] = useState(false);
   const [flyingPieces, setFlyingPieces] = useState<{ id: number; piece: string; x: number }[]>([]);
@@ -174,6 +176,21 @@ export default function Home() {
             animation: 'scanline 8s linear infinite',
           }} />
         </div>
+
+        {/* Fullscreen toggle */}
+        <button
+          onClick={toggleFullscreen}
+          title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          style={{
+            position: 'fixed', top: 14, right: 14, zIndex: 20,
+            background: 'rgba(191,95,255,0.12)', border: '1px solid rgba(191,95,255,0.35)',
+            borderRadius: 9, cursor: 'pointer', color: 'rgba(191,95,255,0.8)',
+            width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '1.05rem', transition: 'all 0.15s',
+          }}
+        >
+          {isFullscreen ? '⊠' : '⊡'}
+        </button>
 
         {/* Physics orbs */}
         <OrbField />

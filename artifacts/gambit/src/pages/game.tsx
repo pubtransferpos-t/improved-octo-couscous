@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { Color, Move, PieceSymbol, Square } from 'chess.js';
 import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
+import { useFullscreen } from '@/hooks/use-fullscreen';
 import { EFFECTS, EffectType, GambitState } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
 import SpinWheel from '@/components/spin-wheel';
@@ -22,6 +23,7 @@ export default function Game() {
   })();
 
   const onlineMatch = useOnlineMatch(settings);
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   const [playerColor, setPlayerColor] = useState<Color>(() =>
     settings.playerColor === 'random'
       ? Math.random() < 0.5 ? 'w' : 'b'
@@ -238,13 +240,27 @@ export default function Game() {
         }}>
           Gambit
         </span>
-        <span style={{
-          fontFamily: '"Press Start 2P", monospace', fontSize: '0.42rem',
-          color: 'rgba(200,190,255,0.35)', letterSpacing: '0.08em',
-          textTransform: 'uppercase', width: 72, textAlign: 'right',
-        }}>
-          {settings.mode.replace('-', ' ')}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 72, justifyContent: 'flex-end' }}>
+          <span style={{
+            fontFamily: '"Press Start 2P", monospace', fontSize: '0.42rem',
+            color: 'rgba(200,190,255,0.35)', letterSpacing: '0.08em',
+            textTransform: 'uppercase', textAlign: 'right',
+          }}>
+            {settings.mode.replace('-', ' ')}
+          </span>
+          <button
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            style={{
+              background: 'rgba(191,95,255,0.12)', border: '1px solid rgba(191,95,255,0.35)',
+              borderRadius: 7, cursor: 'pointer', color: 'rgba(191,95,255,0.8)',
+              width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, transition: 'all 0.15s', fontSize: '0.9rem', padding: 0,
+            }}
+          >
+            {isFullscreen ? '⊠' : '⊡'}
+          </button>
+        </div>
       </div>
 
       {/* Game layout */}
