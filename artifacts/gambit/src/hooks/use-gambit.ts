@@ -33,12 +33,51 @@ export interface OnlineMatch {
 
 const WORKER_PROXY = '/api/worker-proxy';
 
+interface ServerActiveEffect {
+  color: 'white' | 'black';
+  type: string;
+  turnsRemaining: number;
+  params?: Record<string, unknown>;
+}
+
 interface ServerRoom {
   fen: string;
   moveCount: number;
   status: string;
   turn: 'white' | 'black';
   spinEligibility: { white: number; black: number };
+  activeEffects?: ServerActiveEffect[];
+  stockfishElo?: { white: number | null; black: number | null };
+}
+
+/** Effect types that the server tracks authoritatively (timed, sync'd on every poll). */
+const SERVER_TRACKED_EFFECTS = new Set([
+  'shield_piece', 'freeze_piece', 'downgrade_queen',
+  'skip_turn', 'block_nerf', 'force_pawn', 'no_backward',
+]);
+
+/** Merge server-tracked active effects into client GambitState. */
+function mergeServerEffects(
+  clientEffects: GambitState['activeEffects'],
+  serverEffects: ServerActiveEffect[] = [],
+): GambitState['activeEffects'] {
+  // Strip client-side copies of server-tracked effects (server is authoritative)
+  const filtered: GambitState['activeEffects'] = {
+    w: clientEffects.w.filter(e => !SERVER_TRACKED_EFFECTS.has(e.type)),
+    b: clientEffects.b.filter(e => !SERVER_TRACKED_EFFECTS.has(e.type)),
+  };
+  // Re-add from server state
+  for (const se of serverEffects) {
+    if (!SERVER_TRACKED_EFFECTS.has(se.type)) continue;
+    const clientColor: Color = se.color === 'white' ? 'w' : 'b';
+    filtered[clientColor].push({
+      id: `srv-${se.type}-${clientColor}`,
+      type: se.type as EffectType,
+      duration: se.turnsRemaining,
+      targetSquares: [],
+    });
+  }
+  return filtered;
 }
 
 function serverProgress(room: ServerRoom): { w: number; b: number } {
@@ -162,6 +201,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
   const onlineRoomRef = useRef<string | null>(null);
   const onlineSyncRef = useRef<(() => void) | null>(null);
   const lastServerProgress = useRef<{ w: number; b: number } | null>(null);
+  // Keep a stable ref to onlineMatch so admin functions can read it without deps
+  const onlineMatchRef = useRef(onlineMatch);
+  useEffect(() => { onlineMatchRef.current = onlineMatch; }, [onlineMatch]);
 
   const [syncCooldown, setSyncCooldown] = useState(0);
   const lastSyncPressRef = useRef(0);
@@ -233,7 +275,20 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }
     lastServerProgress.current = progress;
     chessRef.current.load(room.fen);
-    setState(s => ({ ...s, fen: room.fen, turn: chessRef.current.turn(), spinProgress: progress }));
+    setState(s => {
+      const mergedEffects = mergeServerEffects(s.activeEffects, room.activeEffects);
+      const newStockfishElo = room.stockfishElo
+        ? { w: room.stockfishElo.white, b: room.stockfishElo.black }
+        : s.stockfishElo;
+      return {
+        ...s,
+        fen: room.fen,
+        turn: chessRef.current.turn(),
+        spinProgress: progress,
+        activeEffects: mergedEffects,
+        stockfishElo: newStockfishElo,
+      };
+    });
     setGameOver(checkGameOver(chessRef.current));
   }, [checkGameOver]);
 
@@ -676,12 +731,27 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           if (progress[myColor] <= 0 && (!prev || prev[myColor] > 0)) setPendingSpin(myColor);
         }
         lastServerProgress.current = progress;
+        const newStockfishElo = remote.stockfishElo
+          ? { w: remote.stockfishElo.white, b: remote.stockfishElo.black }
+          : null;
         if (remote.fen === chessRef.current.fen()) {
-          setState(s => ({ ...s, spinProgress: progress }));
+          setState(s => ({
+            ...s,
+            spinProgress: progress,
+            activeEffects: mergeServerEffects(s.activeEffects, remote.activeEffects),
+            ...(newStockfishElo && { stockfishElo: newStockfishElo }),
+          }));
           return;
         }
         chessRef.current.load(remote.fen);
-        setState(s => ({ ...s, fen: remote.fen, turn: chessRef.current.turn(), spinProgress: progress }));
+        setState(s => ({
+          ...s,
+          fen: remote.fen,
+          turn: chessRef.current.turn(),
+          spinProgress: progress,
+          activeEffects: mergeServerEffects(s.activeEffects, remote.activeEffects),
+          ...(newStockfishElo && { stockfishElo: newStockfishElo }),
+        }));
         setGameOver(checkGameOver(chessRef.current));
       } catch {
         // transient
@@ -1304,15 +1374,27 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     setPendingSpin(color);
   }, []);
 
+  /** Push the current board FEN to the worker (admin only, no spin advancement). */
+  const adminSyncFenToWorker = useCallback((fen: string) => {
+    const match = onlineMatchRef.current;
+    if (match?.status !== 'matched' || !match.roomId) return;
+    void fetch(`${WORKER_PROXY}/rooms/${match.roomId}/sync-fen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen }),
+    }).catch(() => {});
+  }, []);
+
   /** Admin / debug helper: load a custom FEN directly */
   const loadFen = useCallback((fen: string) => {
     try {
       chessRef.current.load(fen);
       setState(s => ({ ...s, fen: chessRef.current.fen(), turn: chessRef.current.turn() }));
+      adminSyncFenToWorker(chessRef.current.fen());
     } catch {
       // ignore invalid FEN
     }
-  }, []);
+  }, [adminSyncFenToWorker]);
 
   /** Admin helper: force whose turn it is */
   const forceSetTurn = useCallback((color: Color) => {
@@ -1322,8 +1404,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     try {
       chessRef.current.load(tokens.join(' '));
       setState(s => ({ ...s, fen: chessRef.current.fen(), turn: color }));
+      adminSyncFenToWorker(chessRef.current.fen());
     } catch { /* ignore */ }
-  }, []);
+  }, [adminSyncFenToWorker]);
 
   /** Admin helper: clear all active effects for a player */
   const clearPlayerEffects = useCallback((color: Color) => {
@@ -1350,8 +1433,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         chessRef.current.remove(square);
       }
       setState(s => ({ ...s, fen: chessRef.current.fen() }));
+      adminSyncFenToWorker(chessRef.current.fen());
     } catch { /* ignore invalid placement */ }
-  }, []);
+  }, [adminSyncFenToWorker]);
 
   /** Admin helper: rigged spin outcomes — the next organic spin for each color lands on this effect */
   const [riggedSpins, setRiggedSpinsState] = useState<{ w: EffectType | null; b: EffectType | null }>({ w: null, b: null });

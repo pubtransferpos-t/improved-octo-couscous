@@ -32654,7 +32654,29 @@ var worker_proxy_default = router3;
 // src/routes/admin.ts
 var import_express4 = __toESM(require_express2(), 1);
 var router4 = (0, import_express4.Router)();
-router4.post("/admin/verify", (req, res) => {
+function getClientIp(req) {
+  const cf = req.headers["cf-connecting-ip"];
+  if (cf) return String(cf).split(",")[0].trim();
+  const xff = req.headers["x-forwarded-for"];
+  if (xff) return String(xff).split(",")[0].trim();
+  return req.socket?.remoteAddress ?? (req.ip ?? "");
+}
+var LOCALHOST_ADDRS = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"];
+function isIpAllowed(ip) {
+  if (LOCALHOST_ADDRS.includes(ip)) return true;
+  const rawEnv = process.env["ADMIN_ALLOWED_IPS"] ?? "";
+  const configured = rawEnv.split(",").map((s) => s.trim()).filter(Boolean);
+  return configured.some((entry) => ip === entry || ip === `::ffff:${entry}`);
+}
+function requireAllowedIp(req, res, next) {
+  const ip = getClientIp(req);
+  if (isIpAllowed(ip)) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: "Forbidden: IP not on admin allowlist" });
+}
+router4.post("/admin/verify", requireAllowedIp, (req, res) => {
   const { password } = req.body ?? {};
   const adminPassword = process.env["ADMIN_PASSWORD"];
   if (!adminPassword || !password) {
@@ -32663,27 +32685,9 @@ router4.post("/admin/verify", (req, res) => {
   }
   res.json({ allowed: password === adminPassword });
 });
-function getClientIp(req) {
-  const cf = req.headers["cf-connecting-ip"];
-  if (cf) return String(cf).split(",")[0].trim();
-  const xff = req.headers["x-forwarded-for"];
-  if (xff) return String(xff).split(",")[0].trim();
-  return req.socket?.remoteAddress ?? (req.ip ?? "");
-}
 router4.get("/admin/access", (req, res) => {
   const ip = getClientIp(req);
-  const alwaysAllowed = [
-    "127.0.0.1",
-    "::1",
-    "::ffff:127.0.0.1",
-    "localhost"
-  ];
-  const rawEnv = process.env["ADMIN_ALLOWED_IPS"] ?? "";
-  const configured = rawEnv.split(",").map((s) => s.trim()).filter(Boolean);
-  const allowlist = [...alwaysAllowed, ...configured];
-  const allowed = allowlist.some(
-    (entry) => ip === entry || ip === `::ffff:${entry}`
-  );
+  const allowed = isIpAllowed(ip);
   const responseBody = { allowed };
   if (process.env["NODE_ENV"] === "development") {
     responseBody.ip = ip;

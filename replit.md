@@ -71,6 +71,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 - The API server workflow uses `PORT=3001` explicitly; it is NOT yet registered as a Replit artifact so `/api` is not proxy-routed
 - gambit frontend is at `artifacts/gambit/` (registered artifact, port 22001, preview path `/`)
 - api-server is at `artifacts/api-server/` (workflow only, port 3001, no proxy routing yet)
+- After any change to `worker/src/`, redeploy the Cloudflare Worker (see Online Multiplayer Setup section) — local changes do not affect the live Worker until redeployed
+- Admin panel IP restriction is enforced server-side on all `/api/admin/*` routes via `ADMIN_ALLOWED_IPS` env var (already set)
+- Effect test mode: press "2" five times on the home screen within 3 seconds → `/effect-test` route
 
 ## Pointers
 

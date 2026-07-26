@@ -6,6 +6,10 @@ import { Switch } from '@/components/ui/switch';
 import SnakeGame from '@/components/snake-game';
 import OrbField from '@/components/orb-field';
 
+const DEBUG_KEY = '2';
+const DEBUG_PRESSES = 5;
+const DEBUG_WINDOW_MS = 3000;
+
 /* ── persistent settings store ─────────────────────────────────────────── */
 let _settings: GameSettings = { ...DEFAULT_SETTINGS };
 export function getGameSettings(): GameSettings { return _settings; }
@@ -55,6 +59,30 @@ export default function Home() {
   const titleClickTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextId = useRef(0);
   const starId = useRef(0);
+  const debugPressCount = useRef(0);
+  const debugPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Secret debug mode: press "2" five times within DEBUG_WINDOW_MS → effect test page
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== DEBUG_KEY) return;
+      debugPressCount.current += 1;
+      if (debugPressTimer.current) clearTimeout(debugPressTimer.current);
+      if (debugPressCount.current >= DEBUG_PRESSES) {
+        debugPressCount.current = 0;
+        setLocation('/effect-test');
+        return;
+      }
+      debugPressTimer.current = setTimeout(() => {
+        debugPressCount.current = 0;
+      }, DEBUG_WINDOW_MS);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      if (debugPressTimer.current) clearTimeout(debugPressTimer.current);
+    };
+  }, [setLocation]);
 
   // Auto-wiggle play button
   useEffect(() => {
