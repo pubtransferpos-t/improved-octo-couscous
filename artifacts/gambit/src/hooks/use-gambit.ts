@@ -270,14 +270,14 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           if (!c.get(sq)) c.put(eff.kidnappedPiece, sq);
           newFen = c.fen();
         } else if (eff.type === 'revolt_pawns' && s.revoltedColor) {
-          // Revert revolted pawns back to their original color
+          // Revert revolted pawns back to their original color.
+          // Scan the board dynamically — the pawns may have moved from their
+          // original squares during the revolt duration.
           const revColor = s.revoltedColor;
-          for (const sq of eff.targetSquares) {
-            const p = c.get(sq as Square);
-            if (p && p.type === 'p' && p.color === color) {
-              c.remove(sq as Square);
-              c.put({ type: 'p', color: revColor }, sq as Square);
-            }
+          const currentlyRevolted = getPieces(c, color, 'p');
+          for (const sq of currentlyRevolted) {
+            c.remove(sq);
+            c.put({ type: 'p', color: revColor }, sq);
           }
           stateChanges.revoltedColor = null;
           newFen = c.fen();
@@ -517,6 +517,18 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         tokens[3] = '-';
         c.load(tokens.join(' '));
         finalFen = c.fen();
+      }
+
+      // Chain capture: if chain_capture is active and a pawn just captured, give an extra turn
+      if (!skipTurnEffect) {
+        const chainCapture = s.activeEffects[turn].find(e => e.type === 'chain_capture');
+        if (chainCapture && moveRes && moveRes.captured && moveRes.piece === 'p') {
+          const tokens = c.fen().split(' ');
+          tokens[1] = turn;
+          tokens[3] = '-';
+          c.load(tokens.join(' '));
+          finalFen = c.fen();
+        }
       }
 
       // Check claimed squares: if opponent moves onto a claimed square
@@ -1227,7 +1239,16 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         case 'opponent_piece': return !!(piece && piece.color !== by);
         case 'own_pawn': return !!(piece && piece.color === by && piece.type === 'p');
         case 'own_non_king': return !!(piece && piece.color === by && piece.type !== 'k');
-        case 'empty_square': return !piece;
+        case 'empty_square': {
+          if (piece) return false;
+          // Pawns can't be placed on promotion ranks
+          if (effect === 'get_pawn') {
+            const rank = parseInt(square[1]);
+            if (by === 'w' && rank === 8) return false;
+            if (by === 'b' && rank === 1) return false;
+          }
+          return true;
+        }
         case 'any_square': return true;
         case 'two_own_pieces': return !!(piece && piece.color === by);
         default: return false;
@@ -1263,6 +1284,21 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }
   }, []);
 
+  /** Admin / debug helper: force a spin for any color without waiting for spinProgress */
+  const triggerSpin = useCallback((color: Color) => {
+    setPendingSpin(color);
+  }, []);
+
+  /** Admin / debug helper: load a custom FEN directly */
+  const loadFen = useCallback((fen: string) => {
+    try {
+      chessRef.current.load(fen);
+      setState(s => ({ ...s, fen: chessRef.current.fen(), turn: chessRef.current.turn() }));
+    } catch {
+      // ignore invalid FEN
+    }
+  }, []);
+
   return {
     state,
     chess: chessRef.current,
@@ -1279,6 +1315,8 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     syncCooldown,
     resolveRps,
     selectWeightedEffect: (enabledEffects: EffectType[]) => selectWeightedEffect(enabledEffects),
+    triggerSpin,
+    loadFen,
   };
 }
 

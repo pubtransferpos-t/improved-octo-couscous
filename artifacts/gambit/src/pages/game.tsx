@@ -5,7 +5,10 @@ import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS } from '@
 import { EFFECTS, EffectType, GambitState } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
 import SpinWheel from '@/components/spin-wheel';
+import AdminPanel from '@/components/admin-panel';
 import { getGameSettings } from './home';
+
+const ADMIN_SECRET = 'GAMBIT777';
 
 const PIECE_SYMBOLS: Record<PieceSymbol, string> = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -30,11 +33,21 @@ export default function Game() {
   const [botThinking, setBotThinking] = useState(false);
   const botScheduled = useRef(false);
 
+  // ── Admin panel ──────────────────────────────────────────────────────────
+  const [adminUnlocked, setAdminUnlocked] = useState(() =>
+    typeof localStorage !== 'undefined' && localStorage.getItem('gambit_admin') === ADMIN_SECRET,
+  );
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPrompt, setAdminPrompt] = useState(false);
+  const [adminInput, setAdminInput] = useState('');
+  const [adminError, setAdminError] = useState('');
+
   const {
     state, chess, pendingSpin, resolveCurrentSpin,
     gameOver, makeMove, getLegalMoves,
     initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
+    triggerSpin, loadFen,
   } = useGambitGame(settings, onlineMatch);
 
   useEffect(() => {
