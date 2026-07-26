@@ -95,7 +95,19 @@ export default function EffectTest() {
             </Section>
           )}
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
+          {/* Plain-text results log */}
+          <div style={{ marginTop: 28, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '14px 16px' }}>
+            <div style={{ fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem', color: 'rgba(200,190,255,0.5)', letterSpacing: '0.1em', marginBottom: 10 }}>PLAIN TEXT RESULTS</div>
+            <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.7, color: 'rgba(220,215,255,0.85)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {results.map(r => {
+                const def = EFFECTS[r.type];
+                const statusIcon = r.result === 'working' ? '✓' : r.result === 'failed' ? '✗' : '–';
+                return `${statusIcon} ${def.label} (${r.type}) — ${r.result.toUpperCase()}`;
+              }).join('\n')}
+            </pre>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
             <button onClick={copyReport} style={actionBtn('#00f5ff')}>📋 Copy Report</button>
             <button onClick={() => setLocation('/')} style={actionBtn('#ff2d78')}>← Back to Menu</button>
           </div>

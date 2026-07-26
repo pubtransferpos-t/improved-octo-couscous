@@ -8,6 +8,7 @@ import { Move, Square } from 'chess.js';
 import { EFFECTS, EffectType } from '@/hooks/gambit-engine';
 import { useGambitGame, DEFAULT_SETTINGS, GameSettings } from '@/hooks/use-gambit';
 import ChessBoard from '@/components/chess-board';
+import SpinWheel from '@/components/spin-wheel';
 
 const TEST_SETTINGS: GameSettings = {
   ...DEFAULT_SETTINGS,
@@ -26,6 +27,7 @@ export default function GameTestBed({ effectType, onWorking, onFailed }: Props) 
   const {
     state, chess, makeMove, getLegalMoves, effectTargeting,
     setEffectTargeting, handleTargetClick, initiateEffect, loadFen,
+    pendingSpin, resolveCurrentSpin,
   } = useGambitGame(TEST_SETTINGS);
 
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
@@ -54,6 +56,12 @@ export default function GameTestBed({ effectType, onWorking, onFailed }: Props) 
 
   const applyEffect = () => {
     initiateEffect(effectType, 'w');
+    // bonus_spin pushes to pendingSpinsRef but never calls setPendingSpin directly
+    // (it's designed to fire after an organic spin resolves). In the isolated test
+    // bed there is no active spin, so we manually kick the queue so the wheel appears.
+    if (effectType === 'bonus_spin') {
+      resolveCurrentSpin();
+    }
     setEffectApplied(true);
   };
 
@@ -86,6 +94,15 @@ export default function GameTestBed({ effectType, onWorking, onFailed }: Props) 
         playerColor={null}
         effectTargeting={effectTargeting}
       />
+
+      {/* Spin wheel — shown when a wheel-triggering effect fires (bonus_spin, double_spin, five_spin) */}
+      {pendingSpin !== null && (
+        <SpinWheel
+          spinningFor={pendingSpin}
+          enabledEffects={TEST_SETTINGS.enabledEffects}
+          onEffect={effect => { initiateEffect(effect, pendingSpin); resolveCurrentSpin(); }}
+        />
+      )}
 
       {/* Apply / Reset */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
