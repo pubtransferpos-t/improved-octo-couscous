@@ -47,7 +47,7 @@ export default function Game() {
     gameOver, makeMove, getLegalMoves,
     initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
-    triggerSpin, loadFen,
+    triggerSpin, loadFen, forceSetTurn, clearPlayerEffects, setSpinProgress,
   } = useGambitGame(settings, onlineMatch);
 
   useEffect(() => {
@@ -55,6 +55,36 @@ export default function Game() {
       setPlayerColor(onlineMatch.color);
     }
   }, [settings.mode, onlineMatch.status, onlineMatch.color]);
+
+  // ── Admin panel keyboard shortcut (Shift+Alt+X) ───────────────────────────
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.shiftKey && e.altKey && (e.key === 'X' || e.key === 'x')) {
+        e.preventDefault();
+        if (adminUnlocked) {
+          setShowAdmin(v => !v);
+          return;
+        }
+        // Try IP allowlist first; fall back to password prompt
+        fetch('/api/admin/access')
+          .then(r => r.json())
+          .then((data: { allowed: boolean }) => {
+            if (data.allowed) {
+              setAdminUnlocked(true);
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('gambit_admin', ADMIN_SECRET);
+              }
+              setShowAdmin(true);
+            } else {
+              setAdminPrompt(true);
+            }
+          })
+          .catch(() => setAdminPrompt(true));
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [adminUnlocked]);
 
   // ── Bot AI ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -293,6 +323,110 @@ export default function Game() {
             >✕</button>
           </div>
         </div>
+      )}
+
+      {/* Admin password prompt */}
+      {adminPrompt && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 190,
+          background: 'rgba(5,2,20,0.92)',
+          backdropFilter: 'blur(10px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div className="animate-bounce-in" style={{
+            width: '100%', maxWidth: 340, padding: '28px 24px',
+            background: 'linear-gradient(145deg, #14102a, #1a1230)',
+            border: '2px solid rgba(255,45,120,0.5)', borderRadius: 20,
+            textAlign: 'center',
+            boxShadow: '0 0 50px rgba(255,45,120,0.3)',
+          }}>
+            <div style={{
+              fontFamily: '"Permanent Marker", cursive', fontSize: '1.4rem',
+              color: '#ff2d78', marginBottom: 14,
+              filter: 'drop-shadow(0 0 8px rgba(255,45,120,0.5))',
+            }}>🛠 Admin Access</div>
+            <input
+              type="password"
+              value={adminInput}
+              onChange={e => setAdminInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  if (adminInput === ADMIN_SECRET) {
+                    setAdminUnlocked(true);
+                    if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', ADMIN_SECRET);
+                    setAdminPrompt(false);
+                    setShowAdmin(true);
+                    setAdminInput('');
+                    setAdminError('');
+                  } else {
+                    setAdminError('Wrong password');
+                  }
+                }
+              }}
+              placeholder="Enter admin password…"
+              autoFocus
+              style={{
+                width: '100%', padding: '10px 12px',
+                fontFamily: '"Boogaloo", sans-serif', fontSize: '1rem',
+                background: 'rgba(0,0,0,0.5)', borderRadius: 8,
+                border: '1px solid rgba(191,95,255,0.4)',
+                color: '#f0f0ff', marginBottom: 8,
+                boxSizing: 'border-box',
+              }}
+            />
+            {adminError && (
+              <div style={{ color: '#ff2d78', fontSize: '0.85rem', marginBottom: 8 }}>{adminError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => {
+                  if (adminInput === ADMIN_SECRET) {
+                    setAdminUnlocked(true);
+                    if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', ADMIN_SECRET);
+                    setAdminPrompt(false);
+                    setShowAdmin(true);
+                    setAdminInput('');
+                    setAdminError('');
+                  } else {
+                    setAdminError('Wrong password');
+                  }
+                }}
+                style={{
+                  flex: 1, padding: '10px 0',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1rem',
+                  background: 'rgba(255,45,120,0.2)', color: '#ff2d78',
+                  border: '1px solid rgba(255,45,120,0.4)', borderRadius: 10,
+                  cursor: 'pointer',
+                }}
+              >Unlock</button>
+              <button
+                onClick={() => { setAdminPrompt(false); setAdminInput(''); setAdminError(''); }}
+                style={{
+                  flex: 1, padding: '10px 0',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1rem',
+                  background: 'rgba(255,255,255,0.06)', color: 'rgba(200,190,255,0.6)',
+                  border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
+                  cursor: 'pointer',
+                }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin panel */}
+      {adminUnlocked && showAdmin && (
+        <AdminPanel
+          state={state}
+          currentTurn={state.turn}
+          onForceEffect={(effect, color) => initiateEffect(effect, color)}
+          onForceSpin={triggerSpin}
+          onLoadFen={loadFen}
+          onSetSpinProgress={setSpinProgress}
+          onClearEffects={clearPlayerEffects}
+          onForceTurn={forceSetTurn}
+          onClose={() => setShowAdmin(false)}
+        />
       )}
 
       {/* Game over overlay */}

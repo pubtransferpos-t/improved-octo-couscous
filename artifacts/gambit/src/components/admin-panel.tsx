@@ -1,6 +1,7 @@
 /**
- * Admin / debug panel — only visible after unlocking with the secret key.
- * Access: press Ctrl+Shift+D while in a game, then enter the password.
+ * Admin / debug panel — only visible after unlocking with the secret key
+ * or IP allowlist approval.
+ * Access: press Shift+Alt+X while in a game, then enter the password.
  */
 
 import { useState } from 'react';
@@ -15,22 +16,27 @@ interface AdminPanelProps {
   onForceEffect: (effect: EffectType, color: Color) => void;
   onForceSpin: (color: Color) => void;
   onLoadFen: (fen: string) => void;
+  onSetSpinProgress: (color: Color, value: number) => void;
+  onClearEffects: (color: Color) => void;
+  onForceTurn: (color: Color) => void;
   onClose: () => void;
 }
 
 export default function AdminPanel({
-  state, currentTurn, onForceEffect, onForceSpin, onLoadFen, onClose,
+  state, currentTurn, onForceEffect, onForceSpin, onLoadFen,
+  onSetSpinProgress, onClearEffects, onForceTurn, onClose,
 }: AdminPanelProps) {
   const [targetColor, setTargetColor] = useState<Color>('w');
   const [fenInput, setFenInput] = useState(state.fen);
   const [fenError, setFenError] = useState('');
   const [activeTab, setActiveTab] = useState<'effects' | 'state' | 'board'>('effects');
+  const [spinInputW, setSpinInputW] = useState(String(state.spinProgress.w));
+  const [spinInputB, setSpinInputB] = useState(String(state.spinProgress.b));
 
   const handleFenLoad = () => {
     if (!fenInput.trim()) return;
     setFenError('');
     try {
-      // Basic FEN validation — Chess will throw if invalid
       const parts = fenInput.trim().split(' ');
       if (parts.length < 4) { setFenError('Invalid FEN format'); return; }
       onLoadFen(fenInput.trim());
@@ -79,6 +85,14 @@ export default function AdminPanel({
     fontFamily: '"Boogaloo", sans-serif', transition: 'all 0.12s',
   });
 
+  const inputStyle: React.CSSProperties = {
+    width: 52, padding: '3px 6px',
+    fontFamily: 'monospace', fontSize: '0.82rem',
+    background: 'rgba(0,0,0,0.4)', borderRadius: 4,
+    border: '1px solid rgba(191,95,255,0.4)',
+    color: '#f0f0ff',
+  };
+
   const section = (label: string) => (
     <div style={{
       fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem',
@@ -103,7 +117,7 @@ export default function AdminPanel({
           <div style={{
             fontFamily: '"Press Start 2P", monospace', fontSize: '0.35rem',
             color: 'rgba(200,190,255,0.4)', marginTop: 2,
-          }}>CTRL+SHIFT+D to toggle</div>
+          }}>SHIFT+ALT+X to toggle</div>
         </div>
         <button onClick={onClose} style={{
           ...btn('#ff2d78'), padding: '6px 10px', fontSize: '1rem', borderRadius: '50%',
@@ -184,7 +198,19 @@ export default function AdminPanel({
         {/* ── State tab ── */}
         {activeTab === 'state' && (
           <>
-            {section('Turn')}
+            {section('Force Turn')}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <button
+                style={{ ...btn('#ffee00'), opacity: currentTurn === 'w' ? 1 : 0.5 }}
+                onClick={() => onForceTurn('w')}
+              >♔ White's Turn</button>
+              <button
+                style={{ ...btn('#00f5ff'), opacity: currentTurn === 'b' ? 1 : 0.5 }}
+                onClick={() => onForceTurn('b')}
+              >♚ Black's Turn</button>
+            </div>
+
+            {section('Current Turn')}
             <div style={{ fontSize: '0.95rem', marginBottom: 8 }}>
               {state.turn === 'w' ? '♔ White' : '♚ Black'} to move
               {currentTurn !== state.turn && (
@@ -193,9 +219,37 @@ export default function AdminPanel({
             </div>
 
             {section('Spin Progress')}
-            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-              <div>♔ White: <span style={{ color: '#ffee00' }}>{state.spinProgress.w}</span> moves left</div>
-              <div>♚ Black: <span style={{ color: '#00f5ff' }}>{state.spinProgress.b}</span> moves left</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#ffee00', fontSize: '0.88rem', width: 56 }}>♔ White</span>
+                <input
+                  type="number"
+                  value={spinInputW}
+                  onChange={e => setSpinInputW(e.target.value)}
+                  style={inputStyle}
+                  min={1} max={99}
+                />
+                <button style={btn('#ffee00')} onClick={() => {
+                  const v = parseInt(spinInputW);
+                  if (!isNaN(v) && v > 0) onSetSpinProgress('w', v);
+                }}>Set</button>
+                <button style={btn('#39ff14')} onClick={() => onForceSpin('w')}>Spin now</button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#00f5ff', fontSize: '0.88rem', width: 56 }}>♚ Black</span>
+                <input
+                  type="number"
+                  value={spinInputB}
+                  onChange={e => setSpinInputB(e.target.value)}
+                  style={inputStyle}
+                  min={1} max={99}
+                />
+                <button style={btn('#00f5ff')} onClick={() => {
+                  const v = parseInt(spinInputB);
+                  if (!isNaN(v) && v > 0) onSetSpinProgress('b', v);
+                }}>Set</button>
+                <button style={btn('#39ff14')} onClick={() => onForceSpin('b')}>Spin now</button>
+              </div>
             </div>
 
             {section('Active Effects')}
@@ -204,9 +258,19 @@ export default function AdminPanel({
               return (
                 <div key={c} style={{ marginBottom: 8 }}>
                   <div style={{
-                    fontSize: '0.82rem', color: c === 'w' ? '#ffee00' : '#00f5ff',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     marginBottom: 3,
-                  }}>{c === 'w' ? '♔ White' : '♚ Black'}</div>
+                  }}>
+                    <div style={{
+                      fontSize: '0.82rem', color: c === 'w' ? '#ffee00' : '#00f5ff',
+                    }}>{c === 'w' ? '♔ White' : '♚ Black'}</div>
+                    {effs.length > 0 && (
+                      <button style={{ ...btn('#ff2d78'), fontSize: '0.72rem', padding: '2px 7px' }}
+                        onClick={() => onClearEffects(c)}>
+                        Clear all
+                      </button>
+                    )}
+                  </div>
                   {effs.length === 0
                     ? <div style={{ fontSize: '0.78rem', color: 'rgba(200,190,255,0.3)' }}>none</div>
                     : effs.map(e => (
@@ -216,6 +280,11 @@ export default function AdminPanel({
                         color: EFFECTS[e.type]?.category === 'buff' ? '#39ff14' : '#ff2d78',
                       }}>
                         {EFFECTS[e.type]?.emoji} {EFFECTS[e.type]?.label} ×{e.duration}
+                        {e.targetSquares.length > 0 && (
+                          <span style={{ color: 'rgba(200,190,255,0.4)', marginLeft: 4 }}>
+                            [{e.targetSquares.join(',')}]
+                          </span>
+                        )}
                       </div>
                     ))
                   }
@@ -249,6 +318,10 @@ export default function AdminPanel({
               {state.extraKings.b.length > 0 && <div style={{ color: '#c084fc' }}>♚ Extra Kings: {state.extraKings.b.join(', ')}</div>}
               {state.permanentBonusSpins.w > 0 && <div style={{ color: '#60a5fa' }}>♔ Permanent spins: +{state.permanentBonusSpins.w}</div>}
               {state.permanentBonusSpins.b > 0 && <div style={{ color: '#60a5fa' }}>♚ Permanent spins: +{state.permanentBonusSpins.b}</div>}
+              {state.claimedSquares.w.length > 0 && <div style={{ color: '#f97316' }}>♔ Claimed: {state.claimedSquares.w.join(', ')}</div>}
+              {state.claimedSquares.b.length > 0 && <div style={{ color: '#f97316' }}>♚ Claimed: {state.claimedSquares.b.join(', ')}</div>}
+              {state.revoltedColor && <div style={{ color: '#a78bfa' }}>Revolted pawns: {state.revoltedColor === 'w' ? 'white→black' : 'black→white'}</div>}
+              {state.rpsPending && <div style={{ color: '#fb7185' }}>RPS pending: {state.rpsPending}</div>}
             </div>
 
             {section('History Length')}
@@ -302,6 +375,7 @@ export default function AdminPanel({
                 { label: 'Starting position', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
                 { label: 'Endgame (KQ vs K)', fen: '8/8/8/8/4k3/8/8/3QK3 w - - 0 1' },
                 { label: 'Both promoted', fen: 'QQQQQQQQ/8/8/8/8/8/8/qqqqqqqq w - - 0 1' },
+                { label: 'White advantage', fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1' },
               ].map(pos => (
                 <button key={pos.fen} onClick={() => { setFenInput(pos.fen); onLoadFen(pos.fen); }}
                   style={{

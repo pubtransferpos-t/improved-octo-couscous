@@ -6,6 +6,11 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Trust the first proxy hop — required for correct IP detection when running
+// behind Cloudflare, nginx, or Replit's reverse proxy. Without this, req.ip
+// always shows the proxy's address, not the real visitor's.
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,

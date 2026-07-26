@@ -271,13 +271,15 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           newFen = c.fen();
         } else if (eff.type === 'revolt_pawns' && s.revoltedColor) {
           // Revert revolted pawns back to their original color.
-          // Scan the board dynamically — the pawns may have moved from their
-          // original squares during the revolt duration.
+          // Only revert as many as were originally revolted — not the caster's
+          // own pawns which are also in the same color pool.
           const revColor = s.revoltedColor;
-          const currentlyRevolted = getPieces(c, color, 'p');
-          for (const sq of currentlyRevolted) {
-            c.remove(sq);
-            c.put({ type: 'p', color: revColor }, sq);
+          const allCasterPawns = getPieces(c, color, 'p');
+          // eff.targetSquares.length = how many opponent pawns were originally revolted
+          const countToRevert = Math.min(eff.targetSquares.length, allCasterPawns.length);
+          for (let ri = 0; ri < countToRevert; ri++) {
+            c.remove(allCasterPawns[ri]);
+            c.put({ type: 'p', color: revColor }, allCasterPawns[ri]);
           }
           stateChanges.revoltedColor = null;
           newFen = c.fen();
@@ -510,6 +512,19 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       let finalFen = c.fen();
       let effects = { ...s.activeEffects };
 
+      // Clean stale freeze_piece entries when a piece is captured
+      if (captured) {
+        const capturedSq = move.to as Square;
+        effects = {
+          w: effects.w.map(e => e.type === 'freeze_piece'
+            ? { ...e, targetSquares: e.targetSquares.filter(sq => sq !== capturedSq) }
+            : e),
+          b: effects.b.map(e => e.type === 'freeze_piece'
+            ? { ...e, targetSquares: e.targetSquares.filter(sq => sq !== capturedSq) }
+            : e),
+        };
+      }
+
       if (skipTurnEffect) {
         effects[nextTurn] = effects[nextTurn].filter(e => e.id !== skipTurnEffect.id);
         const tokens = c.fen().split(' ');
@@ -705,7 +720,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }
 
     // Duration effects → push to activeEffects
-    if (def.duration > 0 && !['car_diagonal', 'backrank_bomb', 'kidnap_piece', 'pawn_sacrifice', 'revolt_pawns', 'six_knights', 'pawns_to_bishops'].includes(effectType)) {
+    if (def.duration > 0 && !['car_diagonal', 'backrank_bomb', 'kidnap_piece', 'pawn_sacrifice', 'revolt_pawns', 'six_knights', 'pawns_to_bishops', 'royal_reversal'].includes(effectType)) {
       setState(s => ({
         ...s,
         activeEffects: {
@@ -1299,6 +1314,33 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }
   }, []);
 
+  /** Admin helper: force whose turn it is */
+  const forceSetTurn = useCallback((color: Color) => {
+    const tokens = chessRef.current.fen().split(' ');
+    tokens[1] = color;
+    tokens[3] = '-'; // clear en-passant
+    try {
+      chessRef.current.load(tokens.join(' '));
+      setState(s => ({ ...s, fen: chessRef.current.fen(), turn: color }));
+    } catch { /* ignore */ }
+  }, []);
+
+  /** Admin helper: clear all active effects for a player */
+  const clearPlayerEffects = useCallback((color: Color) => {
+    setState(s => ({
+      ...s,
+      activeEffects: { ...s.activeEffects, [color]: [] },
+    }));
+  }, []);
+
+  /** Admin helper: directly set spin countdown for a player */
+  const setSpinProgress = useCallback((color: Color, value: number) => {
+    setState(s => ({
+      ...s,
+      spinProgress: { ...s.spinProgress, [color]: Math.max(1, value) },
+    }));
+  }, []);
+
   return {
     state,
     chess: chessRef.current,
@@ -1317,6 +1359,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     selectWeightedEffect: (enabledEffects: EffectType[]) => selectWeightedEffect(enabledEffects),
     triggerSpin,
     loadFen,
+    forceSetTurn,
+    clearPlayerEffects,
+    setSpinProgress,
   };
 }
 
