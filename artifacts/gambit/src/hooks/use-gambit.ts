@@ -1341,6 +1341,24 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }));
   }, []);
 
+  /** Admin helper: place or remove a piece on the board */
+  const spawnPiece = useCallback((square: Square, piece: { type: PieceSymbol; color: Color } | null) => {
+    try {
+      if (piece) {
+        chessRef.current.put(piece, square);
+      } else {
+        chessRef.current.remove(square);
+      }
+      setState(s => ({ ...s, fen: chessRef.current.fen() }));
+    } catch { /* ignore invalid placement */ }
+  }, []);
+
+  /** Admin helper: rigged spin outcomes — the next organic spin for each color lands on this effect */
+  const [riggedSpins, setRiggedSpinsState] = useState<{ w: EffectType | null; b: EffectType | null }>({ w: null, b: null });
+  const setRiggedSpin = useCallback((color: Color, effect: EffectType | null) => {
+    setRiggedSpinsState(s => ({ ...s, [color]: effect }));
+  }, []);
+
   return {
     state,
     chess: chessRef.current,
@@ -1362,6 +1380,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     forceSetTurn,
     clearPlayerEffects,
     setSpinProgress,
+    spawnPiece,
+    riggedSpins,
+    setRiggedSpin,
   };
 }
 

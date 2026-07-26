@@ -2,6 +2,22 @@ import { Router, type Request } from "express";
 
 const router: Router = Router();
 
+/**
+ * POST /api/admin/verify
+ *
+ * Checks the submitted password against the ADMIN_PASSWORD environment secret.
+ * Returns { allowed: boolean }. The password is never stored or echoed.
+ */
+router.post("/admin/verify", (req, res) => {
+  const { password } = (req.body ?? {}) as { password?: string };
+  const adminPassword = process.env["ADMIN_PASSWORD"];
+  if (!adminPassword || !password) {
+    res.json({ allowed: false });
+    return;
+  }
+  res.json({ allowed: password === adminPassword });
+});
+
 /** Extract the real client IP, Cloudflare-aware. */
 function getClientIp(req: Request): string {
   // Cloudflare sets CF-Connecting-IP to the original visitor IP

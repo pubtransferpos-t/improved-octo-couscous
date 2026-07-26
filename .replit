@@ -50,3 +50,8 @@ externalPort = 3001
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+ADMIN_ALLOWED_IPS = "173.48.185.238"

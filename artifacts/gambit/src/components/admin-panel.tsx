@@ -5,10 +5,19 @@
  */
 
 import { useState } from 'react';
-import { Color } from 'chess.js';
+import { Color, PieceSymbol, Square } from 'chess.js';
 import { EFFECTS, EffectType, RARITY_CONFIG, Rarity, GambitState } from '@/hooks/gambit-engine';
 
 const TIER_ORDER: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'broken', 'godly'];
+
+const PIECE_LABELS: { type: PieceSymbol; label: string }[] = [
+  { type: 'k', label: '♚ K' },
+  { type: 'q', label: '♛ Q' },
+  { type: 'r', label: '♜ R' },
+  { type: 'b', label: '♝ B' },
+  { type: 'n', label: '♞ N' },
+  { type: 'p', label: '♟ P' },
+];
 
 interface AdminPanelProps {
   state: GambitState;
@@ -20,11 +29,15 @@ interface AdminPanelProps {
   onClearEffects: (color: Color) => void;
   onForceTurn: (color: Color) => void;
   onClose: () => void;
+  onSpawnPiece: (square: Square, piece: { type: PieceSymbol; color: Color } | null) => void;
+  onRigSpin: (color: Color, effect: EffectType | null) => void;
+  riggedSpins: { w: EffectType | null; b: EffectType | null };
 }
 
 export default function AdminPanel({
   state, currentTurn, onForceEffect, onForceSpin, onLoadFen,
   onSetSpinProgress, onClearEffects, onForceTurn, onClose,
+  onSpawnPiece, onRigSpin, riggedSpins,
 }: AdminPanelProps) {
   const [targetColor, setTargetColor] = useState<Color>('w');
   const [fenInput, setFenInput] = useState(state.fen);
@@ -32,6 +45,16 @@ export default function AdminPanel({
   const [activeTab, setActiveTab] = useState<'effects' | 'state' | 'board'>('effects');
   const [spinInputW, setSpinInputW] = useState(String(state.spinProgress.w));
   const [spinInputB, setSpinInputB] = useState(String(state.spinProgress.b));
+
+  // Spawn piece state
+  const [spawnType, setSpawnType] = useState<PieceSymbol>('q');
+  const [spawnColor, setSpawnColor] = useState<Color>('w');
+  const [spawnSquare, setSpawnSquare] = useState('');
+  const [spawnError, setSpawnError] = useState('');
+
+  // Rig spin state
+  const [rigColor, setRigColor] = useState<Color>('w');
+  const [rigEffect, setRigEffect] = useState<EffectType>('extra_turn');
 
   const handleFenLoad = () => {
     if (!fenInput.trim()) return;
@@ -152,6 +175,41 @@ export default function AdminPanel({
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <button style={btn('#ffee00')} onClick={() => onForceSpin('w')}>🎰 White Spin</button>
               <button style={btn('#00f5ff')} onClick={() => onForceSpin('b')}>🎰 Black Spin</button>
+            </div>
+
+            {section('Rig Next Spin')}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <button style={colorBtn('w')} onClick={() => setRigColor('w')}>♔ White</button>
+                <button style={colorBtn('b')} onClick={() => setRigColor('b')}>♚ Black</button>
+              </div>
+              <select
+                value={rigEffect}
+                onChange={e => setRigEffect(e.target.value as EffectType)}
+                style={{
+                  width: '100%', padding: '4px 6px',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem',
+                  background: 'rgba(0,0,0,0.5)', borderRadius: 6,
+                  border: '1px solid rgba(191,95,255,0.4)',
+                  color: '#f0f0ff', marginBottom: 6,
+                }}
+              >
+                {(Object.keys(EFFECTS) as EffectType[]).map(e => (
+                  <option key={e} value={e}>{EFFECTS[e].emoji} {EFFECTS[e].label}</option>
+                ))}
+              </select>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button style={btn('#bf5fff')} onClick={() => onRigSpin(rigColor, rigEffect)}>
+                  🎯 Rig {rigColor === 'w' ? 'White' : 'Black'}
+                </button>
+                <button style={btn('#ff2d78')} onClick={() => onRigSpin(rigColor, null)}>✕ Clear</button>
+              </div>
+              {(riggedSpins.w || riggedSpins.b) && (
+                <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'rgba(200,190,255,0.5)' }}>
+                  {riggedSpins.w && <div style={{ color: '#ffee00' }}>♔ Rigged → {EFFECTS[riggedSpins.w]?.emoji} {EFFECTS[riggedSpins.w]?.label}</div>}
+                  {riggedSpins.b && <div style={{ color: '#00f5ff' }}>♚ Rigged → {EFFECTS[riggedSpins.b]?.emoji} {EFFECTS[riggedSpins.b]?.label}</div>}
+                </div>
+              )}
             </div>
 
             {section('Force Effect')}
@@ -368,6 +426,58 @@ export default function AdminPanel({
             }}>
               ♜ Load FEN
             </button>
+
+            {section('Spawn Piece')}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                {PIECE_LABELS.map(({ type, label }) => (
+                  <button
+                    key={type}
+                    onClick={() => setSpawnType(type)}
+                    style={{
+                      padding: '3px 8px', borderRadius: 6, fontSize: '0.82rem',
+                      fontFamily: '"Boogaloo", sans-serif',
+                      background: spawnType === type ? 'rgba(191,95,255,0.25)' : 'rgba(0,0,0,0.3)',
+                      border: `1px solid ${spawnType === type ? 'rgba(191,95,255,0.7)' : 'rgba(255,255,255,0.15)'}`,
+                      color: spawnType === type ? '#bf5fff' : 'rgba(200,190,255,0.6)',
+                      cursor: 'pointer',
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <button style={colorBtn('w')} onClick={() => setSpawnColor('w')}>♔ White</button>
+                <button style={colorBtn('b')} onClick={() => setSpawnColor('b')}>♚ Black</button>
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  value={spawnSquare}
+                  onChange={e => { setSpawnSquare(e.target.value.toLowerCase()); setSpawnError(''); }}
+                  placeholder="e4"
+                  maxLength={2}
+                  style={{ ...inputStyle, width: 44 }}
+                />
+                <button
+                  style={btn('#39ff14')}
+                  onClick={() => {
+                    const sq = spawnSquare.trim() as Square;
+                    if (!/^[a-h][1-8]$/.test(sq)) { setSpawnError('Bad square (e.g. e4)'); return; }
+                    onSpawnPiece(sq, { type: spawnType, color: spawnColor });
+                    setSpawnError('');
+                  }}
+                >Place</button>
+                <button
+                  style={btn('#ff2d78')}
+                  onClick={() => {
+                    const sq = spawnSquare.trim() as Square;
+                    if (!/^[a-h][1-8]$/.test(sq)) { setSpawnError('Bad square (e.g. e4)'); return; }
+                    onSpawnPiece(sq, null);
+                    setSpawnError('');
+                  }}
+                >Remove</button>
+              </div>
+              {spawnError && <div style={{ color: '#ff2d78', fontSize: '0.78rem', marginTop: 4 }}>{spawnError}</div>}
+            </div>
 
             {section('Quick Positions')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>

@@ -8,7 +8,7 @@ import SpinWheel from '@/components/spin-wheel';
 import AdminPanel from '@/components/admin-panel';
 import { getGameSettings } from './home';
 
-const ADMIN_SECRET = 'GAMBIT777';
+// Admin secret is verified server-side — not stored in client code.
 
 const PIECE_SYMBOLS: Record<PieceSymbol, string> = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -35,7 +35,7 @@ export default function Game() {
 
   // ── Admin panel ──────────────────────────────────────────────────────────
   const [adminUnlocked, setAdminUnlocked] = useState(() =>
-    typeof localStorage !== 'undefined' && localStorage.getItem('gambit_admin') === ADMIN_SECRET,
+    typeof localStorage !== 'undefined' && localStorage.getItem('gambit_admin') === '1',
   );
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminPrompt, setAdminPrompt] = useState(false);
@@ -48,7 +48,23 @@ export default function Game() {
     initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
     triggerSpin, loadFen, forceSetTurn, clearPlayerEffects, setSpinProgress,
+    spawnPiece, riggedSpins, setRiggedSpin,
   } = useGambitGame(settings, onlineMatch);
+
+  // Keep a ref to riggedSpins so the pendingSpin effect can read the latest value without re-running
+  const riggedSpinsRef = useRef(riggedSpins);
+  useEffect(() => { riggedSpinsRef.current = riggedSpins; }, [riggedSpins]);
+
+  // Auto-apply rigged spin when pendingSpin fires (before SpinWheel renders)
+  useEffect(() => {
+    if (pendingSpin === null) return;
+    const rigged = riggedSpinsRef.current[pendingSpin];
+    if (!rigged) return;
+    setRiggedSpin(pendingSpin, null);
+    initiateEffect(rigged, pendingSpin);
+    resolveCurrentSpin();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSpin]);
 
   useEffect(() => {
     if (settings.mode === 'online' && onlineMatch.status === 'matched' && onlineMatch.color) {
@@ -72,7 +88,7 @@ export default function Game() {
             if (data.allowed) {
               setAdminUnlocked(true);
               if (typeof localStorage !== 'undefined') {
-                localStorage.setItem('gambit_admin', ADMIN_SECRET);
+                localStorage.setItem('gambit_admin', '1');
               }
               setShowAdmin(true);
             } else {
@@ -287,8 +303,8 @@ export default function Game() {
         )}
       </div>
 
-      {/* Spin wheel */}
-      {pendingSpin !== null && (settings.mode !== 'bot' || pendingSpin === playerColor) && (
+      {/* Spin wheel — skip if admin has rigged this spin (auto-applied via useEffect) */}
+      {pendingSpin !== null && !riggedSpins[pendingSpin] && (settings.mode !== 'bot' || pendingSpin === playerColor) && (
         <SpinWheel
           spinningFor={pendingSpin}
           enabledEffects={settings.enabledEffects}
@@ -351,16 +367,25 @@ export default function Game() {
               onChange={e => setAdminInput(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
-                  if (adminInput === ADMIN_SECRET) {
-                    setAdminUnlocked(true);
-                    if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', ADMIN_SECRET);
-                    setAdminPrompt(false);
-                    setShowAdmin(true);
-                    setAdminInput('');
-                    setAdminError('');
-                  } else {
-                    setAdminError('Wrong password');
-                  }
+                  fetch('/api/admin/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: adminInput }),
+                  })
+                    .then(r => r.json())
+                    .then((data: { allowed: boolean }) => {
+                      if (data.allowed) {
+                        setAdminUnlocked(true);
+                        if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', '1');
+                        setAdminPrompt(false);
+                        setShowAdmin(true);
+                        setAdminInput('');
+                        setAdminError('');
+                      } else {
+                        setAdminError('Wrong password');
+                      }
+                    })
+                    .catch(() => setAdminError('Server error'));
                 }
               }}
               placeholder="Enter admin password…"
@@ -380,16 +405,25 @@ export default function Game() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={() => {
-                  if (adminInput === ADMIN_SECRET) {
-                    setAdminUnlocked(true);
-                    if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', ADMIN_SECRET);
-                    setAdminPrompt(false);
-                    setShowAdmin(true);
-                    setAdminInput('');
-                    setAdminError('');
-                  } else {
-                    setAdminError('Wrong password');
-                  }
+                  fetch('/api/admin/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: adminInput }),
+                  })
+                    .then(r => r.json())
+                    .then((data: { allowed: boolean }) => {
+                      if (data.allowed) {
+                        setAdminUnlocked(true);
+                        if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', '1');
+                        setAdminPrompt(false);
+                        setShowAdmin(true);
+                        setAdminInput('');
+                        setAdminError('');
+                      } else {
+                        setAdminError('Wrong password');
+                      }
+                    })
+                    .catch(() => setAdminError('Server error'));
                 }}
                 style={{
                   flex: 1, padding: '10px 0',
@@ -426,6 +460,9 @@ export default function Game() {
           onClearEffects={clearPlayerEffects}
           onForceTurn={forceSetTurn}
           onClose={() => setShowAdmin(false)}
+          onSpawnPiece={spawnPiece}
+          onRigSpin={setRiggedSpin}
+          riggedSpins={riggedSpins}
         />
       )}
 
