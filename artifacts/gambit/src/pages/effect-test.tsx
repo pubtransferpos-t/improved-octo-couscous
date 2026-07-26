@@ -44,6 +44,22 @@ export default function EffectTest() {
     }
   };
 
+  const goBack = () => {
+    if (done) {
+      // Coming back from the summary screen — re-enter the last effect
+      setDone(false);
+      setIndex(ALL_EFFECTS.length - 1);
+      setResults(r => r.slice(0, -1));
+      setGameKey(k => k + 1);
+    } else if (index > 0) {
+      setIndex(i => i - 1);
+      setResults(r => r.slice(0, -1));
+      setGameKey(k => k + 1);
+    }
+  };
+
+  const canGoBack = done || index > 0;
+
   const copyReport = () => {
     const lines = [
       '=== Gambit Effect Test Report ===',
@@ -109,6 +125,7 @@ export default function EffectTest() {
 
           <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
             <button onClick={copyReport} style={actionBtn('#00f5ff')}>📋 Copy Report</button>
+            <button onClick={goBack} style={actionBtn('#00f5ff')}>← Re-test Last</button>
             <button onClick={() => setLocation('/')} style={actionBtn('#ff2d78')}>← Back to Menu</button>
           </div>
         </div>
@@ -125,9 +142,18 @@ export default function EffectTest() {
         <button onClick={() => setLocation('/')} style={{ background: 'rgba(255,45,120,0.15)', border: '1px solid rgba(255,45,120,0.4)', borderRadius: 8, cursor: 'pointer', fontFamily: '"Boogaloo", sans-serif', fontSize: '1rem', color: '#ff2d78', padding: '4px 12px' }}>
           ← Exit
         </button>
-        <span style={{ fontFamily: '"Press Start 2P", monospace', fontSize: '0.45rem', color: 'rgba(200,190,255,0.5)', letterSpacing: '0.08em' }}>
-          EFFECT TEST MODE · {index + 1} / {ALL_EFFECTS.length}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={goBack}
+            disabled={!canGoBack}
+            style={{ background: canGoBack ? 'rgba(0,245,255,0.12)' : 'rgba(255,255,255,0.04)', border: `1px solid ${canGoBack ? 'rgba(0,245,255,0.4)' : 'rgba(255,255,255,0.1)'}`, borderRadius: 8, cursor: canGoBack ? 'pointer' : 'default', fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', color: canGoBack ? '#00f5ff' : 'rgba(255,255,255,0.2)', padding: '4px 12px', transition: 'all 0.15s' }}
+          >
+            ← Prev
+          </button>
+          <span style={{ fontFamily: '"Press Start 2P", monospace', fontSize: '0.45rem', color: 'rgba(200,190,255,0.5)', letterSpacing: '0.08em' }}>
+            EFFECT TEST MODE · {index + 1} / {ALL_EFFECTS.length}
+          </span>
+        </div>
         <button onClick={() => recordResult('skipped')} style={{ background: 'rgba(191,95,255,0.15)', border: '1px solid rgba(191,95,255,0.4)', borderRadius: 8, cursor: 'pointer', fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', color: '#bf5fff', padding: '4px 12px' }}>
           Skip →
         </button>
