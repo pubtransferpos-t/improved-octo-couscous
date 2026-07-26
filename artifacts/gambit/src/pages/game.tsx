@@ -34,13 +34,21 @@ export default function Game() {
   const botScheduled = useRef(false);
 
   // ── Admin panel ──────────────────────────────────────────────────────────
-  const [adminUnlocked, setAdminUnlocked] = useState(() =>
-    typeof localStorage !== 'undefined' && localStorage.getItem('gambit_admin') === '1',
-  );
+  // Never trust client-side storage for auth state — always derive from server.
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminPrompt, setAdminPrompt] = useState(false);
   const [adminInput, setAdminInput] = useState('');
   const [adminError, setAdminError] = useState('');
+
+  // On mount: silently auto-unlock if this device's IP is on the allowlist.
+  useEffect(() => {
+    fetch('/api/admin/access')
+      .then(r => r.json())
+      .then((data: { allowed: boolean }) => { if (data.allowed) setAdminUnlocked(true); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {
     state, chess, pendingSpin, resolveCurrentSpin,
@@ -87,9 +95,6 @@ export default function Game() {
           .then((data: { allowed: boolean }) => {
             if (data.allowed) {
               setAdminUnlocked(true);
-              if (typeof localStorage !== 'undefined') {
-                localStorage.setItem('gambit_admin', '1');
-              }
               setShowAdmin(true);
             } else {
               setAdminPrompt(true);
@@ -129,6 +134,8 @@ export default function Game() {
   // ── Bot auto-spin ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (settings.mode !== 'bot' || pendingSpin === null || pendingSpin === playerColor) return;
+    // If a rigged spin is queued for this color, the rigged-spin effect handles it — don't double-apply.
+    if (riggedSpinsRef.current[pendingSpin]) return;
     const timer = setTimeout(() => {
       const pool = settings.enabledEffects;
       if (pool.length > 0) {
@@ -376,7 +383,6 @@ export default function Game() {
                     .then((data: { allowed: boolean }) => {
                       if (data.allowed) {
                         setAdminUnlocked(true);
-                        if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', '1');
                         setAdminPrompt(false);
                         setShowAdmin(true);
                         setAdminInput('');
@@ -414,7 +420,6 @@ export default function Game() {
                     .then((data: { allowed: boolean }) => {
                       if (data.allowed) {
                         setAdminUnlocked(true);
-                        if (typeof localStorage !== 'undefined') localStorage.setItem('gambit_admin', '1');
                         setAdminPrompt(false);
                         setShowAdmin(true);
                         setAdminInput('');

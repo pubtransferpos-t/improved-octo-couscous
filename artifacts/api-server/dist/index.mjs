@@ -32654,6 +32654,15 @@ var worker_proxy_default = router3;
 // src/routes/admin.ts
 var import_express4 = __toESM(require_express2(), 1);
 var router4 = (0, import_express4.Router)();
+router4.post("/admin/verify", (req, res) => {
+  const { password } = req.body ?? {};
+  const adminPassword = process.env["ADMIN_PASSWORD"];
+  if (!adminPassword || !password) {
+    res.json({ allowed: false });
+    return;
+  }
+  res.json({ allowed: password === adminPassword });
+});
 function getClientIp(req) {
   const cf = req.headers["cf-connecting-ip"];
   if (cf) return String(cf).split(",")[0].trim();
