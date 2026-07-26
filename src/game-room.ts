@@ -35,6 +35,11 @@ export interface RoomState {
     white: number; // moveCount at which white next earns a spin
     black: number;
   };
+  /** Stockfish advisor ELO per color (null = inactive, decays 100/turn, floored at 600) */
+  stockfishElo: {
+    white: number | null;
+    black: number | null;
+  };
   status: "waiting" | "playing" | "checkmate" | "stalemate" | "draw" | "resigned";
   winner?: "white" | "black";
   lastActivity: number; // epoch ms, for cleanup
@@ -99,6 +104,9 @@ export class GameRoom {
       if (method === "POST" && action === "effect") {
         return cors(await this.handleEffect(request));
       }
+      if (method === "POST" && action === "sync-fen") {
+        return cors(await this.handleSyncFen(request));
+      }
       if (method === "POST" && action === "resign") {
         return cors(await this.handleResign(request));
       }
@@ -137,6 +145,7 @@ export class GameRoom {
         white: spinInterval,
         black: spinInterval,
       },
+      stockfishElo: { white: null, black: null },
       status: "waiting",
       lastActivity: Date.now(),
     };
@@ -176,6 +185,8 @@ export class GameRoom {
     if (!room) {
       return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
     }
+    // Ensure stockfishElo exists on legacy rooms that pre-date this field
+    if (!room.stockfishElo) room.stockfishElo = { white: null, black: null };
     return new Response(JSON.stringify(room), {
       headers: { "Content-Type": "application/json" },
     });
@@ -275,6 +286,13 @@ export class GameRoom {
       })
       .filter((e) => e.turnsRemaining > 0);
 
+    // Decay stockfish advisor ELO (100 per turn for the mover, floor at 600)
+    if (!room.stockfishElo) room.stockfishElo = { white: null, black: null };
+    if (room.stockfishElo[color] !== null) {
+      const newElo = (room.stockfishElo[color] as number) - 100;
+      room.stockfishElo[color] = Math.max(600, newElo);
+    }
+
     room.lastActivity = Date.now();
     await this.saveRoom(room);
 
@@ -288,6 +306,7 @@ export class GameRoom {
     if (!room) {
       return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
     }
+    if (!room.stockfishElo) room.stockfishElo = { white: null, black: null };
 
     const body = await request.json<{
       effect: Effect;
@@ -315,6 +334,7 @@ export class GameRoom {
       skip_turn:         { turns: 1, targetColor: color === "white" ? "black" : "white" },
       block_nerf:        { turns: 1, targetColor: color },
       force_pawn:        { turns: 1, targetColor: color === "white" ? "black" : "white" },
+      no_backward:       { turns: 3, targetColor: color === "white" ? "black" : "white" },
     };
 
     if (timedEffects[effect.type]) {
@@ -333,12 +353,53 @@ export class GameRoom {
       room.spinEligibility[opp] += 5;
     }
 
+    // Handle stockfish advisor — track ELO on the server so it survives polls
+    if (effect.type === "stockfish_advisor") {
+      room.stockfishElo[color] = 2500;
+    }
+
     // Advance spin eligibility for the player who just used their spin.
     // This is the critical step that prevents "spin every turn" — the next
     // eligible spin count is pushed forward by spinInterval from the current
     // moveCount.
     const effectiveSpin = spinInterval ?? DEFAULT_SPIN_INTERVAL;
     room.spinEligibility[color] = room.moveCount + effectiveSpin;
+
+    room.lastActivity = Date.now();
+    await this.saveRoom(room);
+
+    return new Response(JSON.stringify(room), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  /**
+   * POST /rooms/:id/sync-fen
+   * Admin/dev helper: update the authoritative FEN without touching spin
+   * eligibility or active effects. Used by the admin panel to push board
+   * changes (loadFen, spawnPiece, forceSetTurn) to both clients in online mode.
+   */
+  private async handleSyncFen(request: Request): Promise<Response> {
+    const room = await this.loadRoom();
+    if (!room) {
+      return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
+    }
+
+    const body = await request.json<{ fen: string }>();
+    if (!body.fen) {
+      return new Response(JSON.stringify({ error: "fen required" }), { status: 400 });
+    }
+
+    // Validate the FEN with chess.js before trusting it
+    try {
+      const chess = new Chess(body.fen);
+      room.fenHistory.push(room.fen);
+      room.fen = chess.fen();
+      const fenTurn = room.fen.split(" ")[1];
+      room.turn = fenTurn === "w" ? "white" : "black";
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid FEN" }), { status: 400 });
+    }
 
     room.lastActivity = Date.now();
     await this.saveRoom(room);
