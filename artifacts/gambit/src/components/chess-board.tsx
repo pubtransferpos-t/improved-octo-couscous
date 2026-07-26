@@ -56,6 +56,25 @@ export default function ChessBoard({
       .filter(e => e.type === 'shield_piece')
       .flatMap(e => e.targetSquares),
   );
+  const kidnappedSquares = new Set(
+    [...state.activeEffects.w, ...state.activeEffects.b]
+      .filter(e => e.type === 'kidnap_piece')
+      .flatMap(e => e.targetSquares),
+  );
+  const carDiagonalSquares = new Set(
+    [...state.activeEffects.w, ...state.activeEffects.b]
+      .filter(e => e.type === 'car_diagonal' && e.diagonalSquares)
+      .flatMap(e => e.diagonalSquares ?? []),
+  );
+  // Claimed squares by each color
+  const claimedW = new Set(state.claimedSquares?.w ?? []);
+  const claimedB = new Set(state.claimedSquares?.b ?? []);
+  // Heir pieces
+  const heirSquares = new Set([
+    ...(state.heir?.w ? [state.heir.w] : []),
+    ...(state.heir?.b ? [state.heir.b] : []),
+  ]);
+
   const targetingSelected = new Set(effectTargeting?.selected ?? []);
 
   const files = isFlipped
@@ -177,11 +196,43 @@ export default function ChessBoard({
                   </span>
                 )}
 
+                {/* Claimed square overlay */}
+                {(claimedW.has(sq) || claimedB.has(sq)) && (
+                  <div className="absolute inset-0 pointer-events-none" style={{
+                    background: claimedW.has(sq) ? 'rgba(255,238,0,0.18)' : 'rgba(0,245,255,0.18)',
+                    border: `2px solid ${claimedW.has(sq) ? '#ffee00' : '#00f5ff'}`,
+                    boxSizing: 'border-box',
+                  }} />
+                )}
+
+                {/* Car diagonal warning */}
+                {carDiagonalSquares.has(sq) && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center" style={{
+                    background: 'rgba(255,50,0,0.18)',
+                    border: '2px solid rgba(255,100,0,0.8)',
+                    boxSizing: 'border-box',
+                    fontSize: 'min(1.5vw, 9px)', zIndex: 8,
+                  }}>
+                    <span style={{ fontSize: 'min(3vw, 14px)' }}>🚗</span>
+                  </div>
+                )}
+
+                {/* Kidnapped square */}
+                {kidnappedSquares.has(sq) && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center" style={{
+                    background: 'rgba(160,0,255,0.2)', border: '2px dashed rgba(160,0,255,0.8)',
+                    boxSizing: 'border-box', zIndex: 8,
+                  }}>
+                    <span style={{ fontSize: 'min(3vw, 14px)' }}>🎭</span>
+                  </div>
+                )}
+
                 {/* Effect badges */}
-                {(isFrozen || isShielded) && (
+                {(isFrozen || isShielded || heirSquares.has(sq)) && (
                   <div className="absolute top-0.5 right-0.5 z-10 text-[8px] leading-none pointer-events-none">
                     {isFrozen && '❄'}
                     {isShielded && '🛡'}
+                    {heirSquares.has(sq) && '🤴'}
                   </div>
                 )}
 
