@@ -93,6 +93,11 @@ export interface EffectDef {
   /** Turns the effect lasts; 0 = instant */
   duration: number;
   targetRule: TargetRule;
+  /**
+   * If true, landing on this effect puts it into the player's hand (up to 5)
+   * instead of applying immediately. The player activates it whenever they choose.
+   */
+  holdable?: boolean;
 }
 
 export const EFFECTS: Record<EffectType, EffectDef> = {
