@@ -438,8 +438,12 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     const turn = c.turn();
     const opp = turn === 'w' ? 'b' : 'w';
 
+    // Generate all moves first so force_pawn can filter across the whole set,
+    // then narrow to the requested square at the end. If we pass `square` here
+    // directly, force_pawn silently breaks: a non-pawn square yields zero pawn
+    // moves so the filter condition is never triggered.
     const forcePawnEffect = state.activeEffects[turn].find(e => e.type === 'force_pawn');
-    let moves = c.moves({ square, verbose: true }) as Move[];
+    let moves = c.moves({ verbose: true }) as Move[];
 
     if (forcePawnEffect) {
       const pawnMoves = moves.filter(m => m.piece === 'p');
@@ -494,6 +498,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       .filter(e => e.type === 'kidnap_piece')
       .flatMap(e => e.targetSquares);
     moves = moves.filter(m => !kidnappedSquares.includes(m.to as Square));
+
+    // Finally, narrow to the requested square (after all effect filters)
+    if (square) moves = moves.filter(m => m.from === square);
 
     return moves;
   }, [state.activeEffects]);
@@ -812,11 +819,23 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
 
     // ── Instant & special-duration effects ────────────────────────────────────
     if (effectType === 'extra_turn') {
-      const tokens = c.fen().split(' ');
-      tokens[1] = by;
-      tokens[3] = '-';
-      c.load(tokens.join(' '));
-      updateState();
+      // Implemented identically to skip_turn: add a skip_turn effect to the
+      // opponent so makeMove's existing skip_turn path handles the turn flip.
+      // This ensures the current player still makes their move first, then
+      // gets another turn — identical behaviour to the opponent being skipped.
+      const opp2 = by === 'w' ? 'b' : 'w';
+      setState(s => ({
+        ...s,
+        activeEffects: {
+          ...s.activeEffects,
+          [opp2]: [...s.activeEffects[opp2], {
+            id: generateId(),
+            type: 'skip_turn' as EffectType,
+            duration: 1,
+            targetSquares: [],
+          }],
+        },
+      }));
     }
     else if (effectType === 'undo_move') {
       if (state.history.length > 2) {
