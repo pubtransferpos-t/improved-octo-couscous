@@ -91,6 +91,11 @@ export default function GameTestBed({ effectType, onWorking, onFailed }: Props) 
   const hasRoyalReversal = state.royalReversal?.w || state.royalReversal?.b;
   const hasExtraKings = (state.extraKings?.w?.length ?? 0) > 0 || (state.extraKings?.b?.length ?? 0) > 0;
   const hasIllegalMove = state.illegalMoveAvailable.w || state.illegalMoveAvailable.b;
+  const forcePawnEffects: { effect: typeof state.activeEffects.w[0]; color: 'w' | 'b' }[] = [
+    ...state.activeEffects.w.filter(e => e.type === 'force_pawn').map(e => ({ effect: e, color: 'w' as const })),
+    ...state.activeEffects.b.filter(e => e.type === 'force_pawn').map(e => ({ effect: e, color: 'b' as const })),
+  ];
+  const hasForcePawn = forcePawnEffects.length > 0;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 12px 20px', gap: 10, overflowY: 'auto' }}>
@@ -129,6 +134,12 @@ export default function GameTestBed({ effectType, onWorking, onFailed }: Props) 
       {hasIllegalMove && (
         <div style={{ background: 'rgba(255,45,120,0.12)', border: '2px solid rgba(255,45,120,0.5)', borderRadius: 10, padding: '6px 14px', fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', color: '#ff2d78' }}>
           🚨 Illegal move active — click any piece, then any square to make an illegal move
+        </div>
+      )}
+      {hasForcePawn && (
+        <div style={{ background: 'rgba(255,153,0,0.1)', border: '1px solid rgba(255,153,0,0.4)', borderRadius: 10, padding: '6px 14px', fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', color: '#ff9900' }}>
+          ♟️ Force Pawn active — {forcePawnEffects.map(({ effect, color }) => `${color === 'w' ? 'White' : 'Black'} (${effect.duration} turn${effect.duration === 1 ? '' : 's'})`).join(', ')}.
+          &nbsp;Make a move and that player can only move pawns on their next turn.
         </div>
       )}
       {hasPermanentBonus && (

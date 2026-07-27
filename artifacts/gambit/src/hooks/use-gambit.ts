@@ -316,7 +316,8 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           newFen = c.fen();
         } else if (eff.type === 'car_diagonal' && eff.diagonalSquares) {
           for (const sq of eff.diagonalSquares) {
-            c.remove(sq as Square);
+            const p = c.get(sq as Square);
+            if (p && p.type !== 'k') c.remove(sq as Square);
           }
           newFen = c.fen();
         } else if (eff.type === 'kidnap_piece' && eff.kidnappedPiece && eff.targetSquares[0]) {
@@ -506,8 +507,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       // Illegal move: directly manipulate the board
       const piece = c.get(move.from as Square);
       if (!piece || piece.color !== turn) return false;
-      c.remove(move.from as Square);
       const target = c.get(move.to as Square);
+      if (target?.type === 'k') return false; // kings cannot be captured
+      c.remove(move.from as Square);
       if (target) c.remove(move.to as Square);
       const putPiece = move.promotion ? { type: move.promotion as PieceSymbol, color: turn } : piece;
       c.put(putPiece, move.to as Square);
@@ -531,7 +533,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         };
       });
       setGameOver(checkGameOver(c));
-      tickEffects(c.turn());
+      tickEffects(turn);
       return true;
     }
 
@@ -707,7 +709,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         .catch(() => onlineSyncRef.current?.());
     }
 
-    if (c.turn() !== turn) tickEffects(c.turn());
+    if (c.turn() !== turn) tickEffects(turn);
     return true;
   }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch, applyServerRoom]);
 
@@ -1321,7 +1323,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     const isValid = (): boolean => {
       switch (def.targetRule) {
         case 'own_piece': return !!(piece && piece.color === by);
-        case 'opponent_piece': return !!(piece && piece.color !== by);
+        case 'opponent_piece': return !!(piece && piece.color !== by && piece.type !== 'k');
         case 'own_pawn': return !!(piece && piece.color === by && piece.type === 'p');
         case 'own_non_king': return !!(piece && piece.color === by && piece.type !== 'k');
         case 'empty_square': {
