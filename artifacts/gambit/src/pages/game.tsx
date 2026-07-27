@@ -3,7 +3,7 @@ import { useLocation } from 'wouter';
 import { Color, Move, PieceSymbol, Square } from 'chess.js';
 import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
 import { useFullscreen } from '@/hooks/use-fullscreen';
-import { EFFECTS, EffectType, GambitState } from '@/hooks/gambit-engine';
+import { EFFECTS, EffectType, GambitState, HeldAbility } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
 import SpinWheel from '@/components/spin-wheel';
 import RpsOverlay from '@/components/rps-overlay';
@@ -57,7 +57,7 @@ export default function Game() {
   const {
     state, chess, pendingSpin, resolveCurrentSpin,
     gameOver, makeMove, getLegalMoves,
-    initiateEffect, effectTargeting, setEffectTargeting, handleTargetClick,
+    initiateEffect, activateHeldAbility, effectTargeting, setEffectTargeting, handleTargetClick,
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
     triggerSpin, loadFen, forceSetTurn, clearPlayerEffects, setSpinProgress,
     spawnPiece, riggedSpins, setRiggedSpin,
@@ -141,10 +141,11 @@ export default function Game() {
     // If a rigged spin is queued for this color, the rigged-spin effect handles it — don't double-apply.
     if (riggedSpinsRef.current[pendingSpin]) return;
     const timer = setTimeout(() => {
-      const pool = settings.enabledEffects;
+      // Filter out holdable effects for bot — bot can't use held abilities
+      const pool = settings.enabledEffects.filter(e => !EFFECTS[e].holdable);
       if (pool.length > 0) {
         const chosen = selectWeightedEffect(pool);
-        initiateEffect(chosen, pendingSpin);
+        initiateEffect(chosen, pendingSpin, true); // forceApply=true skips holdable routing
       }
       resolveCurrentSpin();
     }, 700);
@@ -278,6 +279,11 @@ export default function Game() {
           isLocalPlayer={isOnline && playerColor === 'b'}
           forceSync={isOnline && playerColor === 'b' ? forceSync : undefined}
           syncCooldown={isOnline && playerColor === 'b' ? syncCooldown : 0}
+          canActivateHeld={
+            state.turn === 'b' && !gameOver.isOver && pendingSpin === null && effectTargeting === null &&
+            (settings.mode !== 'bot' || playerColor === 'b')
+          }
+          onActivateHeld={(id, type) => activateHeldAbility(id, type, 'b')}
         />
 
         <ChessBoard
@@ -299,6 +305,11 @@ export default function Game() {
           isLocalPlayer={isOnline && playerColor === 'w'}
           forceSync={isOnline && playerColor === 'w' ? forceSync : undefined}
           syncCooldown={isOnline && playerColor === 'w' ? syncCooldown : 0}
+          canActivateHeld={
+            state.turn === 'w' && !gameOver.isOver && pendingSpin === null && effectTargeting === null &&
+            (settings.mode !== 'bot' || playerColor === 'w')
+          }
+          onActivateHeld={(id, type) => activateHeldAbility(id, type, 'w')}
         />
 
         {/* Illegal move button */}
@@ -632,6 +643,7 @@ const PLAYER_COLORS = { w: '#ffee00', b: '#00f5ff' };
 function PlayerBar({
   color, state, isActive, botThinking,
   isLocalPlayer, forceSync, syncCooldown,
+  onActivateHeld, canActivateHeld,
 }: {
   color: Color;
   state: GambitState;
@@ -640,8 +652,11 @@ function PlayerBar({
   isLocalPlayer?: boolean;
   forceSync?: () => void;
   syncCooldown?: number;
+  onActivateHeld?: (id: string, type: EffectType) => void;
+  canActivateHeld?: boolean;
 }) {
   const effects = state.activeEffects[color];
+  const held = state.heldAbilities[color] ?? [];
   const captured = state.capturedPieces.filter(p => p.color !== color);
   const movesLeft = state.spinProgress[color];
   const pc = PLAYER_COLORS[color];
@@ -755,6 +770,52 @@ function PlayerBar({
               </span>
             );
           })}
+        </div>
+      )}
+
+      {/* Held abilities hand */}
+      {held.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{
+            fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem',
+            color: 'rgba(200,190,255,0.4)', letterSpacing: '0.08em',
+            marginBottom: 5, textTransform: 'uppercase',
+          }}>
+            🃏 Hand ({held.length}/5)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            {held.map((a: HeldAbility) => {
+              const def = EFFECTS[a.type];
+              const isBuff = def?.category === 'buff';
+              const glowColor = isBuff ? '#39ff14' : '#bf5fff';
+              const canUse = !!canActivateHeld;
+              return (
+                <button
+                  key={a.id}
+                  disabled={!canUse}
+                  onClick={() => onActivateHeld?.(a.id, a.type)}
+                  title={`${def?.label}: ${def?.description}${canUse ? '\n\nClick to activate!' : '\n\n(not your turn)'}`}
+                  style={{
+                    fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem',
+                    padding: '3px 10px', borderRadius: 20,
+                    background: canUse
+                      ? (isBuff ? 'rgba(57,255,20,0.18)' : 'rgba(191,95,255,0.18)')
+                      : 'rgba(255,255,255,0.04)',
+                    color: canUse ? glowColor : 'rgba(200,190,255,0.35)',
+                    border: `1px solid ${canUse ? glowColor + '55' : 'rgba(255,255,255,0.1)'}`,
+                    boxShadow: canUse ? `0 0 10px ${glowColor}33` : 'none',
+                    cursor: canUse ? 'pointer' : 'default',
+                    transition: 'all 0.15s',
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    animation: canUse ? 'bob 2s ease-in-out infinite' : 'none',
+                  }}
+                >
+                  <span>{def?.emoji}</span>
+                  <span>{def?.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

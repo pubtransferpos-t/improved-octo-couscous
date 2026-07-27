@@ -4,6 +4,7 @@ import {
   EFFECTS, EffectType, GambitState, generateId, getPieces,
   adjacentSquares, squareDistance, getRandomDiagonal,
   PIECE_VALUES, randomPieceForValue, selectWeightedEffect,
+  HeldAbility, HAND_SIZE_LIMIT,
 } from './gambit-engine';
 
 export interface GameSettings {
@@ -185,6 +186,7 @@ function initGambitState(chess: Chess, settings: GameSettings): GambitState {
     extraKings: { w: [], b: [] },
     rpsPending: null,
     rpsScore: { w: 0, b: 0 },
+    heldAbilities: { w: [], b: [] },
   };
 }
 
@@ -855,6 +857,25 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         return { ...s, permanentBonusSpins: np };
       });
     }
+    else if (effectType === 'transfiguration' && targets.length > 0) {
+      const targetSq = targets[0];
+      const piece = c.get(targetSq);
+      if (piece && piece.color !== by && piece.type !== 'p' && piece.type !== 'k') {
+        const downgrade: Partial<Record<string, PieceSymbol>> = { q: 'r', r: 'b', b: 'p', n: 'p' };
+        const newType = downgrade[piece.type];
+        if (newType) {
+          c.remove(targetSq);
+          const rank = parseInt(targetSq[1]);
+          // Pawns can't be on promotion rank — place as bishop instead
+          if (newType === 'p' && ((piece.color === 'w' && rank === 8) || (piece.color === 'b' && rank === 1))) {
+            c.put({ type: 'b', color: piece.color }, targetSq);
+          } else {
+            c.put({ type: newType, color: piece.color }, targetSq);
+          }
+          updateState();
+        }
+      }
+    }
     else if (effectType === 'clear_effects') {
       setState(s => ({ ...s, activeEffects: { w: [], b: [] } }));
     }
@@ -1304,7 +1325,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
   }, [state, updateState, settings.mode, settings.spinInterval, onlineMatch]);
 
   // ── initiateEffect & handleTargetClick ─────────────────────────────────────
-  const initiateEffect = useCallback((effectType: EffectType, by: Color) => {
+
+  /** Internal: apply or enter targeting mode — no holdable routing. Used by activateHeldAbility. */
+  const applyOrTarget = useCallback((effectType: EffectType, by: Color) => {
     const def = EFFECTS[effectType];
     if (def.targetRule !== 'none') {
       setEffectTargeting({ effect: effectType, by, step: 0, selected: [] });
@@ -1312,6 +1335,43 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       applyEffect(effectType, by);
     }
   }, [applyEffect]);
+
+  /**
+   * Primary entry point for spin results and admin force-effects.
+   * If the effect is holdable, it goes into the player's hand (max HAND_SIZE_LIMIT,
+   * oldest discarded) instead of being applied immediately.
+   * Pass forceApply=true to skip holdable routing (e.g. for the bot).
+   */
+  const initiateEffect = useCallback((effectType: EffectType, by: Color, forceApply = false) => {
+    const def = EFFECTS[effectType];
+    if (def.holdable && !forceApply) {
+      // Add to hand; if at capacity, drop the oldest
+      setState(s => {
+        const current = s.heldAbilities[by];
+        const newAbility: HeldAbility = { id: generateId(), type: effectType };
+        const newHand = current.length >= HAND_SIZE_LIMIT
+          ? [...current.slice(1), newAbility]
+          : [...current, newAbility];
+        return { ...s, heldAbilities: { ...s.heldAbilities, [by]: newHand } };
+      });
+      return;
+    }
+    applyOrTarget(effectType, by);
+  }, [applyOrTarget]);
+
+  /** Activate a held ability from the player's hand by its ID. */
+  const activateHeldAbility = useCallback((abilityId: string, abilityType: EffectType, by: Color) => {
+    // Remove from hand first
+    setState(s => ({
+      ...s,
+      heldAbilities: {
+        ...s.heldAbilities,
+        [by]: s.heldAbilities[by].filter(a => a.id !== abilityId),
+      },
+    }));
+    // Then apply/target (bypassing holdable routing since the player chose to use it)
+    applyOrTarget(abilityType, by);
+  }, [applyOrTarget]);
 
   const handleTargetClick = useCallback((square: Square) => {
     if (!effectTargeting) return;
@@ -1324,6 +1384,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       switch (def.targetRule) {
         case 'own_piece': return !!(piece && piece.color === by);
         case 'opponent_piece': return !!(piece && piece.color !== by && piece.type !== 'k');
+        case 'opponent_non_pawn': return !!(piece && piece.color !== by && piece.type !== 'p' && piece.type !== 'k');
         case 'own_pawn': return !!(piece && piece.color === by && piece.type === 'p');
         case 'own_non_king': return !!(piece && piece.color === by && piece.type !== 'k');
         case 'empty_square': {
@@ -1454,6 +1515,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     makeMove,
     getLegalMoves,
     initiateEffect,
+    activateHeldAbility,
     effectTargeting,
     setEffectTargeting,
     handleTargetClick,

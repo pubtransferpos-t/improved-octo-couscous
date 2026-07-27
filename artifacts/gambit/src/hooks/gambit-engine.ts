@@ -44,6 +44,7 @@ export type EffectType =
   | 'pawn_parry'
   | 'revolt_pawns'
   | 'clear_effects'
+  | 'transfiguration'
   // ── Epic (new) ──
   | 'get_queen'
   | 'all_to_pawns'
@@ -78,6 +79,7 @@ export type TargetRule =
   | 'none'
   | 'own_piece'
   | 'opponent_piece'
+  | 'opponent_non_pawn'
   | 'own_pawn'
   | 'own_non_king'
   | 'empty_square'
@@ -131,6 +133,7 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
     label: 'Freeze Piece', emoji: '❄️',
     description: "Freeze one of your opponent's pieces for 2 turns.",
     category: 'nerf', rarity: 'common', duration: 2, targetRule: 'opponent_piece',
+    holdable: true,
   },
   get_pawn: {
     label: 'You Get a Pawn', emoji: '🐣',
@@ -153,6 +156,7 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
     label: 'Shield Piece', emoji: '🛡️',
     description: 'Protect one of your pieces from capture for 2 turns.',
     category: 'buff', rarity: 'rare', duration: 2, targetRule: 'own_piece',
+    holdable: true,
   },
   block_nerf: {
     label: 'Block Nerf', emoji: '🚫',
@@ -163,6 +167,7 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
     label: 'Undo Move', emoji: '↩️',
     description: "Undo your opponent's last move.",
     category: 'buff', rarity: 'rare', duration: 0, targetRule: 'none',
+    holdable: true,
   },
   bonus_spin: {
     label: 'Bonus Spin', emoji: '🎰',
@@ -198,11 +203,19 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
     label: 'Chain Capture', emoji: '🔗',
     description: 'Your pawns can capture infinitely in one turn for 3 turns.',
     category: 'buff', rarity: 'rare', duration: 3, targetRule: 'none',
+    holdable: true,
   },
   pawn_parry: {
     label: 'Pawn Parry', emoji: '🥊',
     description: 'Your pawns cannot be captured by queens or rooks for 3 turns.',
     category: 'buff', rarity: 'rare', duration: 3, targetRule: 'none',
+    holdable: true,
+  },
+  transfiguration: {
+    label: 'Transfiguration', emoji: '🔮',
+    description: "Downgrade one enemy piece by one tier (Queen→Rook→Bishop→Pawn). Does not work on pawns or kings.",
+    category: 'nerf', rarity: 'rare', duration: 0, targetRule: 'opponent_non_pawn',
+    holdable: true,
   },
   revolt_pawns: {
     label: 'Pawn Revolt', emoji: '⚔️',
@@ -220,6 +233,7 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
     label: 'Revive Piece', emoji: '💫',
     description: 'Place your highest-value captured piece on an empty square.',
     category: 'buff', rarity: 'epic', duration: 0, targetRule: 'empty_square',
+    holdable: true,
   },
   promote_pawn: {
     label: 'Instant Promote', emoji: '🌟',
@@ -396,6 +410,15 @@ export interface ActiveEffect {
   diagonalSquares?: Square[];
 }
 
+/** An ability held in a player's hand, activatable at any time on their turn. */
+export interface HeldAbility {
+  id: string;
+  type: EffectType;
+}
+
+/** Maximum number of held abilities per player before the oldest is discarded. */
+export const HAND_SIZE_LIMIT = 5;
+
 export interface GambitState {
   fen: string;
   turn: Color;
@@ -423,6 +446,8 @@ export interface GambitState {
   rpsPending: Color | null;
   /** RPS scores */
   rpsScore: Record<Color, number>;
+  /** Held abilities (holdable effects waiting in hand) */
+  heldAbilities: Record<Color, HeldAbility[]>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

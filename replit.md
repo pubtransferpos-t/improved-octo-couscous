@@ -62,6 +62,19 @@ created and shown only after a second player is matched.
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
 
+## Held Abilities (Hand) System
+
+Certain abilities — when landed on via spin — go into the player's **hand** (up to 5 slots) instead of applying immediately. Players can click any held ability button on their turn to activate it whenever they want. If the hand is full (5), the oldest ability is silently discarded.
+
+**Holdable abilities:** Freeze Piece, Shield Piece, Undo Move, Chain Capture, Pawn Parry, Revive Piece, Transfiguration.
+
+**Transfiguration (new):** A rare nerf ability. Targets any enemy non-pawn, non-king piece and downgrades it one tier: Queen→Rook, Rook→Bishop, Bishop/Knight→Pawn. Stored in the `holdable: true` flag on `EffectDef` in `artifacts/gambit/src/hooks/gambit-engine.ts`.
+
+**Key files:**
+- `artifacts/gambit/src/hooks/gambit-engine.ts` — `holdable` flag on `EffectDef`, `HeldAbility` interface, `HAND_SIZE_LIMIT`, `heldAbilities` in `GambitState`
+- `artifacts/gambit/src/hooks/use-gambit.ts` — `initiateEffect` (routes holdable to hand), `activateHeldAbility`, `applyOrTarget`, transfiguration handler in `applyEffect`
+- `artifacts/gambit/src/pages/game.tsx` — PlayerBar shows held abilities as clickable buttons; bot auto-spin filters holdable effects out
+
 ## Gotchas
 
 - `DATABASE_URL` is runtime-managed by Replit — do not set it manually
