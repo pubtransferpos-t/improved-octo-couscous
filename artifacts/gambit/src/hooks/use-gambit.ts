@@ -200,6 +200,40 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
   const [gameOver, setGameOver] = useState<{ isOver: boolean; result: string | null }>({ isOver: false, result: null });
   const [effectTargeting, setEffectTargeting] = useState<{ effect: EffectType; by: Color; step: number; selected: Square[] } | null>(null);
 
+  // ── Chess clock (30 min per player, 5 s delay) ──────────────────────────────
+  // Values stored as integer deciseconds (tenths of a second) to avoid float drift.
+  const CLOCK_INITIAL = 30 * 60 * 10; // 18 000 ds = 30 min
+  const CLOCK_DELAY   = 50;            //     50 ds =  5 s
+  const [clock, setClock] = useState<{ w: number; b: number; delay: number }>({
+    w: CLOCK_INITIAL, b: CLOCK_INITIAL, delay: CLOCK_DELAY,
+  });
+  // Pause flag kept in a ref so the 100 ms interval never captures stale closure state
+  const clockPausedRef = useRef(false);
+  useEffect(() => {
+    clockPausedRef.current = gameOver.isOver || pendingSpin !== null || effectTargeting !== null;
+  }, [gameOver.isOver, pendingSpin, effectTargeting]);
+
+  // Tick the clock every 100 ms
+  useEffect(() => {
+    if (gameOver.isOver) return;
+    const id = setInterval(() => {
+      if (clockPausedRef.current) return;
+      setClock(prev => {
+        if (prev.delay > 0) return { ...prev, delay: prev.delay - 1 };
+        const turn = chessRef.current.turn();
+        return { ...prev, [turn]: Math.max(0, prev[turn] - 1) };
+      });
+    }, 100);
+    return () => clearInterval(id);
+  }, [gameOver.isOver]); // re-register only when game-over status changes
+
+  // Flag: if either clock hits 0 trigger game over
+  useEffect(() => {
+    if (gameOver.isOver) return;
+    if (clock.w <= 0) setGameOver({ isOver: true, result: 'Black wins on time' });
+    else if (clock.b <= 0) setGameOver({ isOver: true, result: 'White wins on time' });
+  }, [clock.w, clock.b, gameOver.isOver]);
+
   const onlineRoomRef = useRef<string | null>(null);
   const onlineSyncRef = useRef<(() => void) | null>(null);
   const lastServerProgress = useRef<{ w: number; b: number } | null>(null);
@@ -543,6 +577,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       });
       setGameOver(checkGameOver(c));
       tickEffects(turn);
+      setClock(c => ({ ...c, delay: CLOCK_DELAY }));
       return true;
     }
 
@@ -719,6 +754,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     }
 
     if (c.turn() !== turn) tickEffects(turn);
+    setClock(c => ({ ...c, delay: CLOCK_DELAY }));
     return true;
   }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch, applyServerRoom]);
 
@@ -1550,6 +1586,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     spawnPiece,
     riggedSpins,
     setRiggedSpin,
+    clock,
   };
 }
 

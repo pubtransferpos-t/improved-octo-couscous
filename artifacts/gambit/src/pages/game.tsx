@@ -60,7 +60,7 @@ export default function Game() {
     initiateEffect, activateHeldAbility, effectTargeting, setEffectTargeting, handleTargetClick,
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
     triggerSpin, loadFen, forceSetTurn, clearPlayerEffects, setSpinProgress,
-    spawnPiece, riggedSpins, setRiggedSpin,
+    spawnPiece, riggedSpins, setRiggedSpin, clock,
   } = useGambitGame(settings, onlineMatch);
 
   // Keep a ref to riggedSpins so the pendingSpin effect can read the latest value without re-running
@@ -280,6 +280,8 @@ export default function Game() {
           isLocalPlayer={isOnline && playerColor === 'b'}
           forceSync={isOnline && playerColor === 'b' ? forceSync : undefined}
           syncCooldown={isOnline && playerColor === 'b' ? syncCooldown : 0}
+          clockDs={clock.b}
+          clockDelayDs={state.turn === 'b' ? clock.delay : 0}
           canActivateHeld={
             state.turn === 'b' && !gameOver.isOver && pendingSpin === null && effectTargeting === null &&
             (settings.mode !== 'bot' || playerColor === 'b')
@@ -306,6 +308,8 @@ export default function Game() {
           isLocalPlayer={isOnline && playerColor === 'w'}
           forceSync={isOnline && playerColor === 'w' ? forceSync : undefined}
           syncCooldown={isOnline && playerColor === 'w' ? syncCooldown : 0}
+          clockDs={clock.w}
+          clockDelayDs={state.turn === 'w' ? clock.delay : 0}
           canActivateHeld={
             state.turn === 'w' && !gameOver.isOver && pendingSpin === null && effectTargeting === null &&
             (settings.mode !== 'bot' || playerColor === 'w')
@@ -641,9 +645,22 @@ function MatchmakingScreen({ match, onCancel }: {
 
 const PLAYER_COLORS = { w: '#ffee00', b: '#00f5ff' };
 
+/** Format deciseconds → "m:ss" or "0:ss.t" when under 10 s */
+function formatClock(ds: number): string {
+  const totalSecs = Math.floor(ds / 10);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  if (ds < 100) {
+    // show tenths when under 10 s
+    return `${mins}:${String(secs).padStart(2, '0')}.${ds % 10}`;
+  }
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
 function PlayerBar({
   color, state, isActive, botThinking,
   isLocalPlayer, forceSync, syncCooldown,
+  clockDs, clockDelayDs,
   onActivateHeld, canActivateHeld,
 }: {
   color: Color;
@@ -653,6 +670,8 @@ function PlayerBar({
   isLocalPlayer?: boolean;
   forceSync?: () => void;
   syncCooldown?: number;
+  clockDs?: number;
+  clockDelayDs?: number;
   onActivateHeld?: (id: string, type: EffectType) => void;
   canActivateHeld?: boolean;
 }) {
@@ -736,8 +755,32 @@ function PlayerBar({
           )}
         </div>
 
-        {/* Right: spin countdown */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* Right: clock + spin countdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Chess clock */}
+          {clockDs !== undefined && (() => {
+            const urgent   = clockDs < 600;   // < 60 s
+            const critical = clockDs < 100;   // < 10 s
+            const inDelay  = (clockDelayDs ?? 0) > 0;
+            const clockColor = critical ? '#ff2d78' : urgent ? '#ff9900' : 'rgba(200,190,255,0.75)';
+            return (
+              <div style={{
+                fontFamily: '"VT323", monospace',
+                fontSize: critical ? '1.35rem' : '1.15rem',
+                color: clockColor,
+                minWidth: 58, textAlign: 'right',
+                textShadow: urgent ? `0 0 8px ${clockColor}` : 'none',
+                transition: 'color 0.3s, font-size 0.2s',
+                letterSpacing: '0.04em',
+              }}>
+                {inDelay
+                  ? <span style={{ opacity: 0.55, fontSize: '0.95rem' }}>+{Math.ceil((clockDelayDs ?? 0) / 10)}s</span>
+                  : formatClock(clockDs)
+                }
+              </div>
+            );
+          })()}
+          {/* Spin countdown */}
           <span style={{ fontFamily: '"VT323", monospace', fontSize: '1.1rem', color: 'rgba(200,190,255,0.5)' }}>
             🎰 {movesLeft}
           </span>
