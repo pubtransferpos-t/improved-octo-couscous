@@ -267,8 +267,8 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
   },
   car_diagonal: {
     label: 'Car Incoming!', emoji: '🚗',
-    description: 'In 3 turns a car drives through a random diagonal, killing everything there.',
-    category: 'nerf', rarity: 'epic', duration: 3, targetRule: 'none',
+    description: 'A car targets enemy pieces on a random diagonal. Strikes in 5 turns, then 4, 3, 2, 1 — escalating until it stops. Only enemy pieces are hit (kings are spared).',
+    category: 'nerf', rarity: 'epic', duration: 5, targetRule: 'none',
   },
   illegal_move: {
     label: 'Illegal Move', emoji: '🚨',
@@ -408,6 +408,8 @@ export interface ActiveEffect {
   kidnappedPiece?: { type: PieceSymbol; color: Color };
   /** For car_diagonal: which diagonal squares are affected */
   diagonalSquares?: Square[];
+  /** For car_diagonal: current phase (5→4→3→2→1, stops at 0) */
+  carDiagonalPhase?: number;
 }
 
 /** An ability held in a player's hand, activatable at any time on their turn. */

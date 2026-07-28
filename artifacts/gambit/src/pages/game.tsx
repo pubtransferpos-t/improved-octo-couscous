@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { Color, Move, PieceSymbol, Square } from 'chess.js';
-import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
+import { useGambitGame, useOnlineMatch, GameSettings, DEFAULT_SETTINGS, ChatMsg } from '@/hooks/use-gambit';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 import { EFFECTS, EffectType, GambitState, HeldAbility } from '@/hooks/gambit-engine';
 import ChessBoard from '@/components/chess-board';
@@ -37,6 +37,17 @@ export default function Game() {
   const [botThinking, setBotThinking] = useState(false);
   const botScheduled = useRef(false);
 
+  // ── Resign / Draw / Chat / AFK state ─────────────────────────────────────
+  const [showResignConfirm, setShowResignConfirm] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const [afkVisible, setAfkVisible] = useState(false);
+  const [afkCountdown, setAfkCountdown] = useState(30);
+  const lastActivityRef = useRef(Date.now());
+  const afkWarningRef = useRef(false);
+  const afkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ── Admin panel ──────────────────────────────────────────────────────────
   // Never trust client-side storage for auth state — always derive from server.
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -61,6 +72,8 @@ export default function Game() {
     forceSync, syncCooldown, resolveRps, selectWeightedEffect,
     triggerSpin, loadFen, forceSetTurn, clearPlayerEffects, setSpinProgress,
     spawnPiece, riggedSpins, setRiggedSpin, clock,
+    resign, offerDraw, respondDraw, sendChat,
+    drawOffer, chatMessages, spectatorCount, gameMode: activeGameMode,
   } = useGambitGame(settings, onlineMatch);
 
   // Keep a ref to riggedSpins so the pendingSpin effect can read the latest value without re-running
@@ -153,9 +166,81 @@ export default function Game() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSpin]);
 
+  // ── AFK detection ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (gameOver.isOver) return;
+    const IDLE_MS = 60_000;
+    const resetActivity = () => { lastActivityRef.current = Date.now(); };
+    window.addEventListener('mousemove', resetActivity);
+    window.addEventListener('keydown', resetActivity);
+    window.addEventListener('touchstart', resetActivity);
+    window.addEventListener('click', resetActivity);
+    const checker = setInterval(() => {
+      if (gameOver.isOver) return;
+      const idle = Date.now() - lastActivityRef.current;
+      if (idle >= IDLE_MS && !afkWarningRef.current) {
+        afkWarningRef.current = true;
+        setAfkVisible(true);
+        setAfkCountdown(30);
+        let cd = 30;
+        if (afkIntervalRef.current) clearInterval(afkIntervalRef.current);
+        afkIntervalRef.current = setInterval(() => {
+          cd -= 1;
+          setAfkCountdown(cd);
+          if (cd <= 0) {
+            clearInterval(afkIntervalRef.current!);
+            setAfkVisible(false);
+            afkWarningRef.current = false;
+            // Forfeit the active player in online mode; set draw in local modes
+            if (settings.mode === 'online') {
+              resign(playerColor);
+            } else if (!gameOver.isOver) {
+              // Local: just end the game as abandoned
+              resign(state.turn);
+            }
+          }
+        }, 1000);
+      }
+    }, 5000);
+    return () => {
+      window.removeEventListener('mousemove', resetActivity);
+      window.removeEventListener('keydown', resetActivity);
+      window.removeEventListener('touchstart', resetActivity);
+      window.removeEventListener('click', resetActivity);
+      clearInterval(checker);
+      if (afkIntervalRef.current) clearInterval(afkIntervalRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameOver.isOver, settings.mode, playerColor]);
+
+  // ── Tab-close / visibility-change resign (online mode only) ──────────────
+  useEffect(() => {
+    if (settings.mode !== 'online' || gameOver.isOver) return;
+    const handleUnload = () => {
+      if (onlineMatch.status === 'matched' && onlineMatch.roomId) {
+        const serverColor = playerColor === 'w' ? 'white' : 'black';
+        navigator.sendBeacon(
+          `/api/worker-proxy/rooms/${onlineMatch.roomId}/resign`,
+          JSON.stringify({ color: serverColor }),
+        );
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') handleUnload();
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.mode, gameOver.isOver, onlineMatch.status, onlineMatch.roomId, playerColor]);
+
   useEffect(() => { setSelectedSquare(null); setLegalMoves([]); }, [state.turn]);
 
   const handleSquareClick = useCallback((sq: Square) => {
+    if (settings.spectate) return;  // spectators cannot move
     if (effectTargeting) { handleTargetClick(sq); return; }
     if (settings.mode === 'bot' && state.turn !== playerColor) return;
 
@@ -197,6 +282,7 @@ export default function Game() {
 
   const boardOrientation: Color | null =
     settings.mode === 'pass-and-play' || settings.mode === 'custom' ? null : playerColor;
+  const isSpectator = settings.spectate === true;
 
   const isOnline = settings.mode === 'online';
 
@@ -265,6 +351,67 @@ export default function Game() {
           </button>
         </div>
       </div>
+
+      {/* Action bar: resign / draw / chat / spectator info */}
+      {!gameOver.isOver && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px',
+          flexShrink: 0, background: 'rgba(0,0,0,0.25)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          {isSpectator ? (
+            <span style={{ fontFamily: '"Boogaloo", sans-serif', fontSize: '0.85rem', color: 'rgba(200,190,255,0.5)' }}>
+              👁 Spectating{spectatorCount > 1 ? ` · ${spectatorCount} viewers` : ''} · {activeGameMode ?? 'standard'}
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowResignConfirm(true)}
+                title="Resign"
+                style={{
+                  background: 'rgba(255,45,120,0.1)', border: '1px solid rgba(255,45,120,0.3)',
+                  borderRadius: 7, cursor: 'pointer', color: '#ff2d78',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem', padding: '3px 8px',
+                  transition: 'all 0.15s',
+                }}
+              >🏳️ Resign</button>
+              <button
+                onClick={() => offerDraw(playerColor)}
+                title="Offer Draw"
+                style={{
+                  background: 'rgba(57,255,20,0.07)', border: '1px solid rgba(57,255,20,0.25)',
+                  borderRadius: 7, cursor: 'pointer', color: '#39ff14',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem', padding: '3px 8px',
+                  transition: 'all 0.15s',
+                }}
+              >🤝 Draw</button>
+            </>
+          )}
+          {isOnline && (
+            <>
+              <div style={{ flex: 1 }} />
+              {spectatorCount > 0 && (
+                <span style={{
+                  fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem',
+                  color: 'rgba(191,95,255,0.6)', letterSpacing: '0.05em',
+                }}>👁 {spectatorCount}</span>
+              )}
+              <button
+                onClick={() => setChatOpen(v => !v)}
+                style={{
+                  background: chatOpen ? 'rgba(0,245,255,0.15)' : 'rgba(0,245,255,0.07)',
+                  border: '1px solid rgba(0,245,255,0.3)',
+                  borderRadius: 7, cursor: 'pointer', color: '#00f5ff',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.82rem', padding: '3px 8px',
+                  position: 'relative',
+                }}
+              >
+                💬 Chat
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Game layout */}
       <div style={{
@@ -506,7 +653,7 @@ export default function Game() {
         />
       )}
 
-      {/* Game over overlay */}
+      {/* Game over overlay — with victory animation */}
       {gameOver.isOver && (
         <div style={{
           position: 'fixed', inset: 0,
@@ -514,6 +661,38 @@ export default function Game() {
           backdropFilter: 'blur(8px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
         }}>
+          {/* Victory animation canvas */}
+          {(gameOver.result?.includes('wins') || gameOver.result?.includes('checkmate')) && (
+            <div style={{
+              position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none',
+            }}>
+              <style>{`
+                @keyframes car-run { from { transform: translateX(-120px) translateY(0); } to { transform: translateX(110vw) translateY(-30px); } }
+                @keyframes king-fly { 0%{transform:rotate(0) translate(0,0);opacity:1} 100%{transform:rotate(720deg) translate(80px,-200px);opacity:0} }
+                @keyframes pawn-to-car { 0%,30%{content:'♟';font-size:2rem} 31%,100%{content:'🚗';font-size:2.5rem} }
+                @keyframes draw-dove { 0%{transform:translateY(0) scale(1)} 50%{transform:translateY(-18px) scale(1.12)} 100%{transform:translateY(0) scale(1)} }
+              `}</style>
+              <span style={{
+                position: 'absolute', top: '42%', left: 0,
+                fontSize: '2.5rem', lineHeight: 1,
+                animation: 'car-run 1.6s cubic-bezier(0.22,1,0.36,1) 0.3s both',
+                filter: 'drop-shadow(0 0 12px #ff9900)',
+              }}>🚗</span>
+              <span style={{
+                position: 'absolute', top: '38%', left: '45%',
+                fontSize: '2.5rem', lineHeight: 1,
+                animation: 'king-fly 0.8s ease-in 1.4s both',
+              }}>{gameOver.result?.includes('White') ? '♚' : '♔'}</span>
+            </div>
+          )}
+          {/* Draw animation */}
+          {(gameOver.result?.includes('Draw') || gameOver.result?.includes('draw') || gameOver.result?.includes('stalemate')) && (
+            <div style={{ position: 'absolute', top: '15%', width: '100%', textAlign: 'center', pointerEvents: 'none' }}>
+              <style>{`@keyframes dove-float{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-20px) scale(1.15)}}`}</style>
+              <span style={{ fontSize: '3.5rem', display: 'inline-block', animation: 'dove-float 2s ease-in-out infinite' }}>🕊️</span>
+            </div>
+          )}
+
           <div className="animate-bounce-in" style={{
             background: 'linear-gradient(145deg, #14102a, #1a1230)',
             border: '3px solid transparent',
@@ -524,7 +703,6 @@ export default function Game() {
             textAlign: 'center', borderRadius: 24,
             boxShadow: '0 0 60px rgba(255,45,120,0.3), 0 20px 60px rgba(0,0,0,0.6)',
           }}>
-            {/* Rainbow border trick */}
             <div style={{
               position: 'absolute', inset: -3, borderRadius: 26, zIndex: -1,
               background: 'linear-gradient(135deg, #ff2d78, #ff9900, #ffee00, #39ff14, #00f5ff, #bf5fff)',
@@ -532,9 +710,10 @@ export default function Game() {
             }} />
 
             <div style={{ fontSize: '4rem', marginBottom: 8 }} className="animate-bob">
-              {gameOver.result?.includes('checkmate') || gameOver.result?.includes('won')
-                ? gameOver.result?.includes('White') ? '♔' : '♚'
-                : '🤝'}
+              {gameOver.result?.includes('checkmate') || gameOver.result?.includes('wins') || gameOver.result?.includes('won')
+                ? '🏆'
+                : gameOver.result?.includes('resignation') ? '🏳️'
+                : '🕊️'}
             </div>
             <h2 style={{
               fontFamily: '"Permanent Marker", cursive',
@@ -543,7 +722,7 @@ export default function Game() {
               WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
               margin: '0 0 8px',
             }}>
-              Game Over!
+              {gameOver.result?.includes('checkmate') || gameOver.result?.includes('wins') ? 'Victory!' : 'Game Over!'}
             </h2>
             <p style={{ fontSize: '1rem', fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.7)', marginBottom: 28 }}>
               {gameOver.result}
@@ -558,7 +737,6 @@ export default function Game() {
                   color: '#fff', border: 'none', borderRadius: 14,
                   cursor: 'pointer',
                   boxShadow: '0 0 20px rgba(255,45,120,0.4)',
-                  transition: 'transform 0.15s',
                 }}
               >
                 Again! 🎲
@@ -571,13 +749,224 @@ export default function Game() {
                   background: 'rgba(191,95,255,0.15)',
                   color: '#bf5fff', border: '2px solid rgba(191,95,255,0.4)',
                   borderRadius: 14, cursor: 'pointer',
-                  transition: 'transform 0.15s',
                 }}
               >
                 🏠 Menu
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Resign confirmation modal ─────────────────────────────────────── */}
+      {showResignConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60,
+        }} onClick={() => setShowResignConfirm(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'linear-gradient(145deg, #14102a, #1a1230)',
+            border: '2px solid rgba(255,45,120,0.4)', borderRadius: 20,
+            padding: '32px 28px', width: '100%', maxWidth: 320, textAlign: 'center',
+            boxShadow: '0 0 40px rgba(255,45,120,0.25)',
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: 8 }}>🏳️</div>
+            <h3 style={{ fontFamily: '"Permanent Marker", cursive', fontSize: '1.8rem', margin: '0 0 8px', color: '#ff2d78' }}>Resign?</h3>
+            <p style={{ fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.6)', marginBottom: 24 }}>
+              This will count as a loss. Are you sure?
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setShowResignConfirm(false); resign(playerColor); }}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, cursor: 'pointer',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
+                  background: 'rgba(255,45,120,0.2)', color: '#ff2d78',
+                  border: '2px solid rgba(255,45,120,0.4)',
+                }}
+              >Yes, resign</button>
+              <button
+                onClick={() => setShowResignConfirm(false)}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, cursor: 'pointer',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
+                  background: 'rgba(255,255,255,0.06)', color: 'rgba(200,190,255,0.6)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Incoming draw offer modal ─────────────────────────────────────── */}
+      {drawOffer && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60,
+        }}>
+          <div style={{
+            background: 'linear-gradient(145deg, #14102a, #1a1230)',
+            border: '2px solid rgba(57,255,20,0.4)', borderRadius: 20,
+            padding: '32px 28px', width: '100%', maxWidth: 320, textAlign: 'center',
+            boxShadow: '0 0 40px rgba(57,255,20,0.2)',
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: 8 }}>🤝</div>
+            <h3 style={{ fontFamily: '"Permanent Marker", cursive', fontSize: '1.6rem', margin: '0 0 8px', color: '#39ff14' }}>Draw Offered</h3>
+            <p style={{ fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.6)', marginBottom: 24 }}>
+              {drawOffer.from === 'w' ? 'White' : 'Black'} offers a draw.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => respondDraw(playerColor, 'accept')}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, cursor: 'pointer',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
+                  background: 'rgba(57,255,20,0.15)', color: '#39ff14',
+                  border: '2px solid rgba(57,255,20,0.4)',
+                }}
+              >✓ Accept</button>
+              <button
+                onClick={() => respondDraw(playerColor, 'decline')}
+                style={{
+                  flex: 1, padding: '12px 0', borderRadius: 12, cursor: 'pointer',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem',
+                  background: 'rgba(255,45,120,0.1)', color: '#ff2d78',
+                  border: '1px solid rgba(255,45,120,0.3)',
+                }}
+              >✗ Decline</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AFK warning modal ─────────────────────────────────────────────── */}
+      {afkVisible && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 65,
+        }}>
+          <div style={{
+            background: 'linear-gradient(145deg, #14102a, #1a1230)',
+            border: '2px solid rgba(255,153,0,0.5)', borderRadius: 20,
+            padding: '32px 28px', width: '100%', maxWidth: 320, textAlign: 'center',
+            boxShadow: '0 0 40px rgba(255,153,0,0.25)',
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: 8 }}>⏰</div>
+            <h3 style={{ fontFamily: '"Permanent Marker", cursive', fontSize: '1.6rem', margin: '0 0 8px', color: '#ff9900' }}>Are you still there?</h3>
+            <p style={{ fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.6)', marginBottom: 8 }}>
+              You'll forfeit in {afkCountdown}s
+            </p>
+            <div style={{
+              height: 6, background: 'rgba(255,255,255,0.1)', borderRadius: 3, marginBottom: 24, overflow: 'hidden',
+            }}>
+              <div style={{
+                height: '100%', borderRadius: 3,
+                background: afkCountdown > 15 ? '#39ff14' : afkCountdown > 7 ? '#ff9900' : '#ff2d78',
+                width: `${(afkCountdown / 30) * 100}%`, transition: 'width 1s linear',
+              }} />
+            </div>
+            <button
+              onClick={() => {
+                lastActivityRef.current = Date.now();
+                afkWarningRef.current = false;
+                if (afkIntervalRef.current) { clearInterval(afkIntervalRef.current); afkIntervalRef.current = null; }
+                setAfkVisible(false);
+                setAfkCountdown(30);
+              }}
+              style={{
+                width: '100%', padding: '14px 0', borderRadius: 12, cursor: 'pointer',
+                fontFamily: '"Permanent Marker", cursive', fontSize: '1.4rem',
+                background: 'linear-gradient(135deg, #ff9900, #ffee00)',
+                color: '#0d0a1a', border: 'none',
+                boxShadow: '0 0 20px rgba(255,153,0,0.4)',
+              }}
+            >I'm here! ✋</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Chat panel (slide-up, online only) ──────────────────────────── */}
+      {isOnline && chatOpen && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 55,
+          background: 'linear-gradient(180deg, #14102a, #0d0a1a)',
+          border: '1px solid rgba(0,245,255,0.2)',
+          borderRadius: '20px 20px 0 0',
+          boxShadow: '0 -8px 40px rgba(0,245,255,0.12)',
+          maxHeight: '55vh', display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Panel header */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <span style={{ fontFamily: '"Boogaloo", sans-serif', color: '#00f5ff', fontSize: '1rem' }}>💬 Game Chat</span>
+            <button onClick={() => setChatOpen(false)} style={{
+              background: 'none', border: 'none', color: 'rgba(200,190,255,0.5)', cursor: 'pointer', fontSize: '1.2rem',
+            }}>✕</button>
+          </div>
+          {/* Messages */}
+          <div style={{
+            flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            {chatMessages.length === 0 ? (
+              <p style={{ fontFamily: '"Boogaloo", sans-serif', color: 'rgba(200,190,255,0.3)', textAlign: 'center', margin: 'auto' }}>
+                No messages yet…
+              </p>
+            ) : chatMessages.map((msg, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                <span style={{
+                  fontFamily: '"Press Start 2P", monospace', fontSize: '0.38rem',
+                  color: msg.author === 'white' ? '#ffee00' : msg.author === 'black' ? '#00f5ff' : msg.author === 'system' ? '#39ff14' : '#bf5fff',
+                  flexShrink: 0, marginTop: 2,
+                }}>
+                  {msg.author === 'system' ? '⚙' : msg.author === 'white' ? '♔' : msg.author === 'black' ? '♚' : '👁'}
+                </span>
+                <span style={{ fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', color: 'rgba(220,210,255,0.8)', wordBreak: 'break-word' }}>
+                  {msg.text}
+                </span>
+              </div>
+            ))}
+          </div>
+          {/* Input */}
+          {!isSpectator && (
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                const text = chatInput.trim();
+                if (!text) return;
+                setChatInput('');
+                setChatError('');
+                const authorStr: 'white' | 'black' = playerColor === 'w' ? 'white' : 'black';
+                const err = await sendChat(authorStr, text);
+                if (err) setChatError(err);
+              }}
+              style={{ padding: '10px 12px', display: 'flex', gap: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}
+            >
+              <input
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                maxLength={200}
+                placeholder="Say something…"
+                style={{
+                  flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(0,245,255,0.2)',
+                  borderRadius: 8, padding: '8px 10px', color: '#f0f0ff',
+                  fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem', outline: 'none',
+                }}
+              />
+              <button type="submit" style={{
+                background: 'rgba(0,245,255,0.15)', border: '1px solid rgba(0,245,255,0.35)',
+                borderRadius: 8, cursor: 'pointer', color: '#00f5ff', padding: '8px 14px',
+                fontFamily: '"Boogaloo", sans-serif', fontSize: '0.9rem',
+              }}>Send</button>
+            </form>
+          )}
+          {chatError && (
+            <p style={{ fontFamily: '"Boogaloo", sans-serif', fontSize: '0.8rem', color: '#ff2d78', padding: '4px 12px 8px', margin: 0 }}>
+              {chatError}
+            </p>
+          )}
         </div>
       )}
     </div>

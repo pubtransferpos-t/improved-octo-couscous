@@ -13,6 +13,12 @@ export interface GameSettings {
   botElo: number;
   playerColor: 'w' | 'b' | 'random';
   enabledEffects: EffectType[];
+  /** If set, skip random matchmaking and connect to this specific room */
+  customRoomId?: string;
+  /** Pre-assigned color when joining a custom room as guest */
+  customRoomColor?: Color;
+  /** If true, join the room as a read-only spectator */
+  spectate?: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -41,6 +47,8 @@ interface ServerActiveEffect {
   params?: Record<string, unknown>;
 }
 
+interface ChatMsg { author: string; text: string; ts: number; }
+
 interface ServerRoom {
   fen: string;
   moveCount: number;
@@ -49,7 +57,14 @@ interface ServerRoom {
   spinEligibility: { white: number; black: number };
   activeEffects?: ServerActiveEffect[];
   stockfishElo?: { white: number | null; black: number | null };
+  drawOffer?: { from: 'white' | 'black' };
+  chatMessages?: ChatMsg[];
+  spectatorCount?: number;
+  gameMode?: string;
+  winner?: 'white' | 'black';
 }
+
+export type { ChatMsg };
 
 /** Effect types that the server tracks authoritatively (timed, sync'd on every poll). */
 const SERVER_TRACKED_EFFECTS = new Set([
@@ -89,14 +104,80 @@ function serverProgress(room: ServerRoom): { w: number; b: number } {
 }
 
 export function useOnlineMatch(settings: GameSettings): OnlineMatch {
-  const [match, setMatch] = useState<OnlineMatch>({
-    status: settings.mode === 'online' ? 'checking' : 'matched',
-    playersOnline: 0,
-    message: settings.mode === 'online' ? 'Connecting to matchmaking…' : '',
+  const [match, setMatch] = useState<OnlineMatch>(() => {
+    if (settings.mode !== 'online') return { status: 'matched', playersOnline: 0, message: '' };
+    // Custom room: host waits, guest/spectator connects directly
+    if (settings.customRoomId) {
+      return {
+        status: settings.customRoomColor || settings.spectate ? 'matched' : 'waiting',
+        roomId: settings.customRoomId,
+        color: settings.customRoomColor ?? (settings.spectate ? undefined : 'w'),
+        playersOnline: 1,
+        message: settings.spectate ? 'Spectating…' : (settings.customRoomColor ? 'Joining room…' : 'Waiting for opponent…'),
+      };
+    }
+    return { status: 'checking', playersOnline: 0, message: 'Connecting to matchmaking…' };
   });
 
+  // Custom room: host polls for guest; guest/spectator already matched
   useEffect(() => {
-    if (settings.mode !== 'online') return;
+    if (settings.mode !== 'online' || !settings.customRoomId) return;
+    const roomId = settings.customRoomId;
+
+    // Spectator: just announce and done
+    if (settings.spectate) {
+      void fetch(`${WORKER_PROXY}/rooms/${roomId}/spectate`, { method: 'POST', keepalive: true }).catch(() => {});
+      setMatch({ status: 'matched', roomId, playersOnline: 1, message: 'Spectating…' });
+      return () => {
+        void fetch(`${WORKER_PROXY}/rooms/${roomId}/spectate-leave`, { method: 'POST', keepalive: true }).catch(() => {});
+      };
+    }
+
+    // Guest: join the room, get color
+    if (settings.customRoomColor) {
+      void fetch(`${WORKER_PROXY}/rooms/${roomId}/join`, { method: 'POST' })
+        .then(r => r.json())
+        .then((d: { color?: string; roomId?: string }) => {
+          setMatch({
+            status: 'matched',
+            roomId,
+            color: normalizeOnlineColor(d.color ?? settings.customRoomColor),
+            playersOnline: 2,
+            message: 'Opponent found!',
+          });
+        })
+        .catch(() => setMatch({ status: 'error', playersOnline: 0, message: 'Could not join room' }));
+      return;
+    }
+
+    // Host: poll room state until guest joins
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const r = await fetch(`${WORKER_PROXY}/rooms/${roomId}/state`);
+        if (!r.ok) throw new Error('Room not found');
+        const room = await r.json() as { guestJoined?: boolean; status?: string };
+        if (cancelled) return;
+        if (room.guestJoined || room.status === 'playing') {
+          setMatch({ status: 'matched', roomId, color: 'w', playersOnline: 2, message: 'Opponent joined!' });
+        } else {
+          setMatch({ status: 'waiting', roomId, color: 'w', playersOnline: 1, message: 'Waiting for opponent to join…' });
+          timer = setTimeout(poll, 2000);
+        }
+      } catch (e) {
+        if (!cancelled) setMatch({ status: 'error', playersOnline: 0, message: e instanceof Error ? e.message : 'Connection failed' });
+      }
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.mode, settings.customRoomId, settings.customRoomColor, settings.spectate]);
+
+  // Random matchmaking (original flow)
+  useEffect(() => {
+    if (settings.mode !== 'online' || settings.customRoomId) return;
     let cancelled = false;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let ticket: string | undefined;
@@ -161,7 +242,7 @@ export function useOnlineMatch(settings: GameSettings): OnlineMatch {
         }).catch(() => undefined);
       }
     };
-  }, [settings.mode, settings.spinInterval]);
+  }, [settings.mode, settings.spinInterval, settings.customRoomId]);
 
   return match;
 }
@@ -234,10 +315,17 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     else if (clock.b <= 0) setGameOver({ isOver: true, result: 'White wins on time' });
   }, [clock.w, clock.b, gameOver.isOver]);
 
+  const [drawOffer, setDrawOffer] = useState<{ from: Color } | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [spectatorCount, setSpectatorCount] = useState(0);
+  const [gameMode, setGameMode] = useState<string>('standard');
+  // Stable ref so the poll closure always sees the latest gameOver state
+  const gameOverRef = useRef(gameOver);
+  useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
+
   const onlineRoomRef = useRef<string | null>(null);
   const onlineSyncRef = useRef<(() => void) | null>(null);
   const lastServerProgress = useRef<{ w: number; b: number } | null>(null);
-  // Keep a stable ref to onlineMatch so admin functions can read it without deps
   const onlineMatchRef = useRef(onlineMatch);
   useEffect(() => { onlineMatchRef.current = onlineMatch; }, [onlineMatch]);
 
@@ -351,11 +439,27 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           }
           newFen = c.fen();
         } else if (eff.type === 'car_diagonal' && eff.diagonalSquares) {
+          // Kill only ENEMY pieces (not own pieces, not kings)
+          const oppColor = color === 'w' ? 'b' : 'w';
           for (const sq of eff.diagonalSquares) {
             const p = c.get(sq as Square);
-            if (p && p.type !== 'k') c.remove(sq as Square);
+            if (p && p.color === oppColor && p.type !== 'k') c.remove(sq as Square);
           }
           newFen = c.fen();
+          // Escalating: re-add with phase-1 if not finished
+          const phase = eff.carDiagonalPhase ?? 1;
+          if (phase > 1) {
+            const nextPhase = phase - 1;
+            const nextDiag = getRandomDiagonal();
+            newEffects[color].push({
+              id: generateId(),
+              type: 'car_diagonal' as EffectType,
+              duration: nextPhase,
+              targetSquares: nextDiag,
+              diagonalSquares: nextDiag,
+              carDiagonalPhase: nextPhase,
+            });
+          }
         } else if (eff.type === 'kidnap_piece' && eff.kidnappedPiece && eff.targetSquares[0]) {
           // Return kidnapped piece if square is empty
           const sq = eff.targetSquares[0];
@@ -765,6 +869,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     onlineRoomRef.current = roomId;
     let cancelled = false;
     const myColor = onlineMatch?.color;
+    const isSpectator = settings.spectate;
 
     const sync = async () => {
       try {
@@ -772,6 +877,41 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         if (!response.ok || cancelled) return;
         const remote = await response.json() as ServerRoom;
         if (cancelled) return;
+
+        // Update chat, spectators, game mode
+        if (remote.chatMessages) setChatMessages(remote.chatMessages);
+        if (remote.spectatorCount !== undefined) setSpectatorCount(remote.spectatorCount);
+        if (remote.gameMode) setGameMode(remote.gameMode);
+
+        // Handle draw offer
+        if (remote.drawOffer && myColor) {
+          const offererColor: Color = remote.drawOffer.from === 'white' ? 'w' : 'b';
+          if (offererColor !== myColor) setDrawOffer({ from: offererColor });
+        } else {
+          setDrawOffer(null);
+        }
+
+        // Handle server-authoritative game over
+        if (!gameOverRef.current.isOver) {
+          if (remote.status === 'resigned' && remote.winner) {
+            const winnerName = remote.winner === 'white' ? 'White' : 'Black';
+            setGameOver({ isOver: true, result: `${winnerName} wins by resignation` });
+            return;
+          }
+          if (remote.status === 'draw') {
+            setGameOver({ isOver: true, result: 'Draw agreed' });
+            return;
+          }
+        }
+
+        // Skip board sync if spectator or game is over
+        if (isSpectator) {
+          chessRef.current.load(remote.fen);
+          setState(s => ({ ...s, fen: remote.fen, turn: chessRef.current.turn() }));
+          setGameOver(checkGameOver(chessRef.current));
+          return;
+        }
+
         const progress = serverProgress(remote);
         if (myColor) {
           const prev = lastServerProgress.current;
@@ -814,7 +954,7 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       clearInterval(interval);
       if (onlineRoomRef.current === roomId) onlineRoomRef.current = null;
     };
-  }, [settings.mode, onlineMatch?.roomId, onlineMatch?.status, onlineMatch?.color, checkGameOver]);
+  }, [settings.mode, settings.spectate, onlineMatch?.roomId, onlineMatch?.status, onlineMatch?.color, checkGameOver]);
 
   // ── applyEffect ─────────────────────────────────────────────────────────────
   const applyEffect = useCallback((effectType: EffectType, by: Color, targets: Square[] = [], revivedPiece?: PieceSymbol) => {
@@ -1140,9 +1280,10 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
           [by]: [...s.activeEffects[by], {
             id: generateId(),
             type: effectType,
-            duration: 3,
+            duration: 5,
             targetSquares: diagonalSqs,
             diagonalSquares: diagonalSqs,
+            carDiagonalPhase: 5,
           }],
         },
       }));
@@ -1561,6 +1702,57 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     setRiggedSpinsState(s => ({ ...s, [color]: effect }));
   }, []);
 
+  // ── Resign ────────────────────────────────────────────────────────────────
+  const resign = useCallback((color: Color) => {
+    const winner = color === 'w' ? 'b' : 'w';
+    setGameOver({ isOver: true, result: `${winner === 'w' ? 'White' : 'Black'} wins by resignation` });
+    if (settings.mode === 'online' && onlineMatchRef.current?.roomId) {
+      void fetch(`${WORKER_PROXY}/rooms/${onlineMatchRef.current.roomId}/resign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color: color === 'w' ? 'white' : 'black' }),
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, [settings.mode]);
+
+  // ── Draw offer ─────────────────────────────────────────────────────────────
+  const offerDraw = useCallback((color: Color) => {
+    if (settings.mode !== 'online' || !onlineMatchRef.current?.roomId) {
+      // Local: instant draw
+      setGameOver({ isOver: true, result: 'Draw agreed' });
+      return;
+    }
+    void fetch(`${WORKER_PROXY}/rooms/${onlineMatchRef.current.roomId}/draw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: color === 'w' ? 'white' : 'black', action: 'offer' }),
+    }).then(r => r.json()).then((room: ServerRoom) => {
+      if (room.status === 'draw') setGameOver({ isOver: true, result: 'Draw agreed' });
+    }).catch(() => {});
+  }, [settings.mode]);
+
+  const respondDraw = useCallback((color: Color, action: 'accept' | 'decline') => {
+    setDrawOffer(null);
+    if (!onlineMatchRef.current?.roomId) return;
+    void fetch(`${WORKER_PROXY}/rooms/${onlineMatchRef.current.roomId}/draw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ color: color === 'w' ? 'white' : 'black', action }),
+    }).then(r => r.json()).then((room: ServerRoom) => {
+      if (room.status === 'draw') setGameOver({ isOver: true, result: 'Draw agreed' });
+    }).catch(() => {});
+  }, []);
+
+  const sendChat = useCallback((author: 'white' | 'black' | 'spectator', text: string): Promise<string | null> => {
+    if (!onlineMatchRef.current?.roomId) return Promise.resolve(null);
+    return fetch(`${WORKER_PROXY}/rooms/${onlineMatchRef.current.roomId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author, text }),
+    }).then(r => r.json()).then((d: { error?: string }) => d.error ?? null).catch(() => null);
+  }, []);
+
   return {
     state,
     chess: chessRef.current,
@@ -1587,6 +1779,15 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     riggedSpins,
     setRiggedSpin,
     clock,
+    // Multiplayer features
+    resign,
+    offerDraw,
+    respondDraw,
+    sendChat,
+    drawOffer,
+    chatMessages,
+    spectatorCount,
+    gameMode,
   };
 }
 
