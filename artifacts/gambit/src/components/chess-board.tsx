@@ -97,8 +97,8 @@ export default function ChessBoard({
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(8, 1fr)',
-          width: 'min(80vw, 520px)',
-          height: 'min(80vw, 520px)',
+          width: 'min(80vw, 520px, calc(100dvh - 240px))',
+          height: 'min(80vw, 520px, calc(100dvh - 240px))',
           boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
           borderRadius: 2,
           overflow: 'hidden',

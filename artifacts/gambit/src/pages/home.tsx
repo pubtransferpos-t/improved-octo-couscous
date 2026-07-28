@@ -214,10 +214,10 @@ export default function Home() {
         </div>
 
         {/* Content */}
-        <div style={{ position:'relative', zIndex:10, maxWidth:570, margin:'0 auto', padding:'56px 28px 88px' }}>
+        <div style={{ position:'relative', zIndex:10, maxWidth:570, margin:'0 auto', padding:'28px 24px 40px' }}>
 
           {/* Title */}
-          <header style={{ marginBottom:48, position:'relative' }}>
+          <header style={{ marginBottom:20, position:'relative' }}>
             {/* Spinning conic ring */}
             <div style={{
               position:'absolute', top:-14, left:-20, width:72, height:72, borderRadius:'50%',
@@ -282,7 +282,7 @@ export default function Home() {
           </header>
 
           {/* Mode */}
-          <section style={{ marginBottom:32 }}>
+          <section style={{ marginBottom:20 }}>
             <p style={{ fontFamily:'"Press Start 2P", monospace', fontSize:'0.55rem', letterSpacing:'0.12em', color:'rgba(200,190,255,0.4)', marginBottom:10, textTransform:'uppercase' }}>
               // mode
             </p>
@@ -312,7 +312,7 @@ export default function Home() {
           </section>
 
           {/* Settings */}
-          <section style={{ display:'flex', flexDirection:'column', gap:24, marginBottom:40 }}>
+          <section style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:24 }}>
 
             {settings.mode === 'bot' && (
               <div>

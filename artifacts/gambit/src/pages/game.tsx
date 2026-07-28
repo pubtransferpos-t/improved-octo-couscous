@@ -201,7 +201,7 @@ export default function Game() {
   const isOnline = settings.mode === 'online';
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0d0a1a', color: '#f0f0ff', display: 'flex', flexDirection: 'column', fontFamily: '"Boogaloo", sans-serif' }}>
+    <div style={{ height: '100dvh', overflow: 'hidden', background: '#0d0a1a', color: '#f0f0ff', display: 'flex', flexDirection: 'column', fontFamily: '"Boogaloo", sans-serif' }}>
 
       {/* Rainbow top bar */}
       <div style={{
@@ -268,8 +268,9 @@ export default function Game() {
 
       {/* Game layout */}
       <div style={{
-        flex: 1, display: 'flex', flexDirection: 'column',
+        flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12,
+        overflowY: 'auto',
       }}>
         <PlayerBar
           color="b"
