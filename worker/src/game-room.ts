@@ -62,6 +62,8 @@ export interface RoomState {
   isPublic: boolean;
   /** Slowmode: epoch ms of last chat message per color */
   lastChatAt: { white: number; black: number; spectator: number };
+  /** Duck Chess: current duck square, null means not yet placed */
+  duckSquare?: string | null;
 }
 
 export interface ActiveEffect {
@@ -125,6 +127,7 @@ export class GameRoom {
       if (method === "POST" && action === "chat") return cors(await this.handleChat(request));
       if (method === "POST" && action === "spectate") return cors(await this.handleSpectate());
       if (method === "POST" && action === "spectate-leave") return cors(await this.handleSpectateLeave());
+      if (method === "POST" && action === "duck") return cors(await this.handleDuck(request));
       return cors(new Response(JSON.stringify({ error: "Not found" }), { status: 404 }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -446,6 +449,21 @@ export class GameRoom {
     room.spectatorCount = Math.max(0, (room.spectatorCount ?? 1) - 1);
     await this.saveRoom(room);
     return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  private async handleDuck(request: Request): Promise<Response> {
+    const room = await this.loadRoom();
+    if (!room) return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
+    let body: { square?: string } = {};
+    try { body = await request.json<{ square?: string }>(); } catch { /* ok */ }
+    if (body.square) {
+      room.duckSquare = body.square;
+      room.lastActivity = Date.now();
+      await this.saveRoom(room);
+    }
+    return new Response(JSON.stringify({ ok: true, duckSquare: room.duckSquare }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
 

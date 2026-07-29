@@ -406,28 +406,45 @@ export default function Home() {
           </section>
 
           {/* Play */}
-          <button
-            onClick={startGame}
-            onMouseEnter={() => setPlayHovered(true)}
-            onMouseLeave={() => setPlayHovered(false)}
-            className={playWiggle ? 'animate-wiggle-btn' : ''}
-            style={{
-              width:'100%', padding:'19px 0',
-              fontFamily:'"Permanent Marker", cursive', fontSize:'2.1rem',
-              background: playHovered
-                ? 'linear-gradient(135deg,#ff9900,#ff2d78,#bf5fff)'
-                : 'linear-gradient(135deg,#ff2d78,#ff9900,#ffee00)',
-              color:'#fff', border:'none', borderRadius:18,
-              boxShadow: playHovered
-                ? '0 0 44px rgba(255,45,120,0.7), 0 8px 32px rgba(255,45,120,0.4)'
-                : '0 0 20px rgba(255,45,120,0.35), 0 4px 16px rgba(0,0,0,0.4)',
-              transform: playHovered ? 'scale(1.03) translateY(-2px)' : 'scale(1)',
-              transition:'all 0.18s cubic-bezier(0.34,1.56,0.64,1)',
-              letterSpacing:'0.05em',
-            }}
-          >
-            PLAY
-          </button>
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            <button
+              onClick={startGame}
+              onMouseEnter={() => setPlayHovered(true)}
+              onMouseLeave={() => setPlayHovered(false)}
+              className={playWiggle ? 'animate-wiggle-btn' : ''}
+              style={{
+                width:'100%', padding:'19px 0',
+                fontFamily:'"Permanent Marker", cursive', fontSize:'2.1rem',
+                background: playHovered
+                  ? 'linear-gradient(135deg,#ff9900,#ff2d78,#bf5fff)'
+                  : 'linear-gradient(135deg,#ff2d78,#ff9900,#ffee00)',
+                color:'#fff', border:'none', borderRadius:18,
+                boxShadow: playHovered
+                  ? '0 0 44px rgba(255,45,120,0.7), 0 8px 32px rgba(255,45,120,0.4)'
+                  : '0 0 20px rgba(255,45,120,0.35), 0 4px 16px rgba(0,0,0,0.4)',
+                transform: playHovered ? 'scale(1.03) translateY(-2px)' : 'scale(1)',
+                transition:'all 0.18s cubic-bezier(0.34,1.56,0.64,1)',
+                letterSpacing:'0.05em',
+              }}
+            >
+              PLAY
+            </button>
+            {settings.mode === 'online' && workerOnline === true && (
+              <button
+                onClick={() => { _settings = settings; setLocation('/lobby'); }}
+                style={{
+                  width:'100%', padding:'13px 0',
+                  fontFamily:'"Boogaloo", sans-serif', fontSize:'1.15rem',
+                  background:'rgba(191,95,255,0.12)',
+                  color:'#bf5fff', border:'1.5px solid rgba(191,95,255,0.4)', borderRadius:14,
+                  cursor:'pointer', letterSpacing:'0.04em',
+                  transition:'all 0.15s',
+                }}
+              >
+                🎲 Custom Rooms — create or browse
+              </button>
+            )}
+          </div>
 
           {/* Online status indicator — no URL exposed to players */}
           <div style={{ marginTop:36 }}>

@@ -62,6 +62,7 @@ interface ServerRoom {
   spectatorCount?: number;
   gameMode?: string;
   winner?: 'white' | 'black';
+  duckSquare?: string | null;
 }
 
 export type { ChatMsg };
@@ -268,6 +269,7 @@ function initGambitState(chess: Chess, settings: GameSettings): GambitState {
     rpsPending: null,
     rpsScore: { w: 0, b: 0 },
     heldAbilities: { w: [], b: [] },
+    duckSquare: null,
   };
 }
 
@@ -277,6 +279,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
 
   const [pendingSpin, setPendingSpin] = useState<Color | null>(null);
   const pendingSpinsRef = useRef<Color[]>([]);
+
+  // Duck Chess: which player needs to place the duck after their move
+  const [duckPending, setDuckPending] = useState<Color | null>(null);
 
   const [gameOver, setGameOver] = useState<{ isOver: boolean; result: string | null }>({ isOver: false, result: null });
   const [effectTargeting, setEffectTargeting] = useState<{ effect: EffectType; by: Color; step: number; selected: Square[] } | null>(null);
@@ -319,6 +324,8 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
   const [spectatorCount, setSpectatorCount] = useState(0);
   const [gameMode, setGameMode] = useState<string>('standard');
+  const gameModeRef = useRef(gameMode);
+  useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   // Stable ref so the poll closure always sees the latest gameOver state
   const gameOverRef = useRef(gameOver);
   useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
@@ -411,6 +418,8 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         spinProgress: progress,
         activeEffects: mergedEffects,
         stockfishElo: newStockfishElo,
+        // Sync duck square from server (duck chess mode)
+        duckSquare: room.duckSquare !== undefined ? (room.duckSquare as Square | null) : s.duckSquare,
       };
     });
     setGameOver(checkGameOver(chessRef.current));
@@ -637,11 +646,16 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
       .flatMap(e => e.targetSquares);
     moves = moves.filter(m => !kidnappedSquares.includes(m.to as Square));
 
+    // Duck chess: duck square blocks piece placement there
+    if (state.duckSquare) {
+      moves = moves.filter(m => m.to !== state.duckSquare);
+    }
+
     // Finally, narrow to the requested square (after all effect filters)
     if (square) moves = moves.filter(m => m.from === square);
 
     return moves;
-  }, [state.activeEffects]);
+  }, [state.activeEffects, state.duckSquare]);
 
   // ── makeMove ────────────────────────────────────────────────────────────────
   const makeMove = useCallback((move: { from: string; to: string; promotion?: string }, ignoreValidation = false) => {
@@ -857,10 +871,15 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
         .catch(() => onlineSyncRef.current?.());
     }
 
+    // Duck Chess: require the mover to place/move the duck after every move
+    if (gameModeRef.current === 'duck_chess' && !settings.spectate) {
+      setDuckPending(turn);
+    }
+
     if (c.turn() !== turn) tickEffects(turn);
     setClock(c => ({ ...c, delay: CLOCK_DELAY }));
     return true;
-  }, [getLegalMoves, settings.mode, settings.spinInterval, tickEffects, checkGameOver, onlineMatch, applyServerRoom]);
+  }, [getLegalMoves, settings.mode, settings.spinInterval, settings.spectate, tickEffects, checkGameOver, onlineMatch, applyServerRoom]);
 
   // ── Online poll ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1702,6 +1721,20 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     setRiggedSpinsState(s => ({ ...s, [color]: effect }));
   }, []);
 
+  // ── Duck Chess: place/move the duck ──────────────────────────────────────
+  const placeDuck = useCallback((sq: Square) => {
+    setState(s => ({ ...s, duckSquare: sq }));
+    setDuckPending(null);
+    // Sync duck square to server for online duck chess
+    if (settings.mode === 'online' && onlineMatchRef.current?.roomId) {
+      void fetch(`${WORKER_PROXY}/rooms/${onlineMatchRef.current.roomId}/duck`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ square: sq }),
+      }).catch(() => {});
+    }
+  }, [settings.mode]);
+
   // ── Resign ────────────────────────────────────────────────────────────────
   const resign = useCallback((color: Color) => {
     const winner = color === 'w' ? 'b' : 'w';
@@ -1788,6 +1821,9 @@ export function useGambitGame(settings: GameSettings, onlineMatch?: OnlineMatch)
     chatMessages,
     spectatorCount,
     gameMode,
+    // Duck Chess
+    duckPending,
+    placeDuck,
   };
 }
 

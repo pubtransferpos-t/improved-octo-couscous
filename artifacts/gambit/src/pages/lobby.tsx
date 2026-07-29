@@ -13,7 +13,7 @@ import { getGameSettings } from './home';
 const WORKER_PROXY = '/api/worker-proxy';
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
-type GameMode = 'standard' | 'chess960';
+type GameMode = 'standard' | 'chess960' | 'duck_chess' | 'bughouse' | 'four_player' | 'live_action' | 'chess_checkers';
 
 interface LobbyRoom {
   roomId: string;
@@ -21,27 +21,25 @@ interface LobbyRoom {
   status: 'waiting' | 'playing';
   createdAt: number;
   spectatorCount: number;
+  spinInterval?: number;
 }
+
+interface ModeInfo { id: GameMode; label: string; emoji: string; desc: string }
+
+const AVAILABLE_MODES: ModeInfo[] = [
+  { id: 'standard',      label: 'Standard',          emoji: '♟',  desc: 'Classic Gambit rules' },
+  { id: 'chess960',      label: 'Chess960',           emoji: '🎲', desc: 'Randomised back rank' },
+  { id: 'duck_chess',    label: 'Duck Chess',         emoji: '🦆', desc: 'Place a blocking duck after every move' },
+  { id: 'bughouse',      label: 'Bughouse',           emoji: '🐛', desc: 'Captured pieces pass to your partner' },
+  { id: 'four_player',   label: 'Four-Player',        emoji: '4️⃣', desc: 'Four armies on one board' },
+  { id: 'live_action',   label: 'Live Action',        emoji: '⚡', desc: 'Real-time — no turn waiting' },
+  { id: 'chess_checkers',label: 'Chess vs Checkers',  emoji: '🔴', desc: 'One side plays checkers rules' },
+];
 
 function gameModeLabel(mode: string) {
-  const map: Record<string, string> = {
-    standard: 'Standard', chess960: 'Chess960',
-    duck_chess: '🦆 Duck Chess (soon)', bughouse: 'Bughouse (soon)',
-    four_player: 'Four-Player (soon)', live_action: 'Live Action (soon)',
-    chess_checkers: 'Chess vs Checkers (soon)',
-  };
-  return map[mode] ?? mode;
+  const found = AVAILABLE_MODES.find(m => m.id === mode);
+  return found ? `${found.emoji} ${found.label}` : mode;
 }
-
-const AVAILABLE_MODES: { id: GameMode | string; label: string; available: boolean }[] = [
-  { id: 'standard', label: 'Standard', available: true },
-  { id: 'chess960', label: 'Chess960', available: true },
-  { id: 'duck_chess', label: '🦆 Duck Chess', available: false },
-  { id: 'bughouse', label: 'Bughouse', available: false },
-  { id: 'four_player', label: 'Four-Player', available: false },
-  { id: 'live_action', label: 'Live Action', available: false },
-  { id: 'chess_checkers', label: 'Chess vs Checkers', available: false },
-];
 
 /** Generate a valid Chess960 starting FEN */
 function generateChess960Fen(): string {
@@ -137,7 +135,7 @@ export default function Lobby() {
         await fetch(`${WORKER_PROXY}/lobby/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomId, gameMode }),
+          body: JSON.stringify({ roomId, gameMode, spinInterval }),
         }).catch(() => {});
       }
 
@@ -287,24 +285,30 @@ export default function Lobby() {
             <>
               {/* Game mode selector */}
               <p style={{ margin: '0 0 8px', color: 'rgba(200,190,255,0.6)', fontSize: '0.85rem' }}>Game mode</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-                {AVAILABLE_MODES.map(m => (
-                  <button
-                    key={m.id}
-                    onClick={() => m.available && setGameMode(m.id)}
-                    disabled={!m.available}
-                    title={m.available ? undefined : 'Coming soon'}
-                    style={{
-                      padding: '5px 12px', borderRadius: 8, cursor: m.available ? 'pointer' : 'not-allowed',
-                      fontFamily: '"Boogaloo", sans-serif', fontSize: '0.85rem',
-                      background: gameMode === m.id ? 'rgba(191,95,255,0.3)' : 'rgba(255,255,255,0.05)',
-                      border: `1px solid ${gameMode === m.id ? '#bf5fff' : 'rgba(255,255,255,0.12)'}`,
-                      color: m.available ? (gameMode === m.id ? '#bf5fff' : 'rgba(200,190,255,0.7)') : 'rgba(200,190,255,0.3)',
-                    }}
-                  >
-                    {m.label}{!m.available ? ' 🔒' : ''}
-                  </button>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
+                {AVAILABLE_MODES.map(m => {
+                  const active = gameMode === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => setGameMode(m.id)}
+                      style={{
+                        padding: '8px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                        fontFamily: '"Boogaloo", sans-serif',
+                        background: active ? 'rgba(191,95,255,0.18)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${active ? '#bf5fff' : 'rgba(255,255,255,0.08)'}`,
+                        color: active ? '#bf5fff' : 'rgba(200,190,255,0.7)',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}
+                    >
+                      <span style={{ fontSize: '1.3rem', lineHeight: 1 }}>{m.emoji}</span>
+                      <span>
+                        <span style={{ fontSize: '0.95rem', fontWeight: active ? 700 : 400 }}>{m.label}</span>
+                        <span style={{ marginLeft: 8, fontSize: '0.75rem', color: 'rgba(200,190,255,0.4)' }}>{m.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Spin interval */}
@@ -391,6 +395,11 @@ export default function Lobby() {
                   </div>
                   <div style={{ marginTop: 4, color: 'rgba(200,190,255,0.7)', fontSize: '0.9rem' }}>
                     {gameModeLabel(room.gameMode)}
+                    {room.spinInterval != null && (
+                      <span style={{ marginLeft: 8, color: '#ff9900', fontSize: '0.75rem' }}>
+                        🎲 /{room.spinInterval}
+                      </span>
+                    )}
                     {room.spectatorCount > 0 && (
                       <span style={{ marginLeft: 8, color: 'rgba(200,190,255,0.4)', fontSize: '0.75rem' }}>
                         👁 {room.spectatorCount}

@@ -74,6 +74,7 @@ export default function Game() {
     spawnPiece, riggedSpins, setRiggedSpin, clock,
     resign, offerDraw, respondDraw, sendChat,
     drawOffer, chatMessages, spectatorCount, gameMode: activeGameMode,
+    duckPending, placeDuck,
   } = useGambitGame(settings, onlineMatch);
 
   // Keep a ref to riggedSpins so the pendingSpin effect can read the latest value without re-running
@@ -242,6 +243,19 @@ export default function Game() {
   const handleSquareClick = useCallback((sq: Square) => {
     if (settings.spectate) return;  // spectators cannot move
     if (effectTargeting) { handleTargetClick(sq); return; }
+
+    // Duck Chess: if duck placement is pending for the local player, handle it
+    if (duckPending !== null) {
+      const isMyDuck = settings.mode === 'pass-and-play' || settings.mode === 'custom'
+        ? true
+        : duckPending === playerColor;
+      if (isMyDuck) {
+        const occupant = chess.get(sq);
+        if (!occupant) placeDuck(sq); // duck can only go on empty squares
+        return;
+      }
+    }
+
     if (settings.mode === 'bot' && state.turn !== playerColor) return;
 
     if (selectedSquare) {
@@ -264,7 +278,7 @@ export default function Game() {
       if (selectedSquare === sq) { setSelectedSquare(null); setLegalMoves([]); }
       else { setSelectedSquare(sq); setLegalMoves(getLegalMoves(sq)); }
     } else { setSelectedSquare(null); setLegalMoves([]); }
-  }, [effectTargeting, handleTargetClick, selectedSquare, legalMoves, chess, state.turn, makeMove, getLegalMoves, settings.mode, playerColor]);
+  }, [effectTargeting, handleTargetClick, duckPending, playerColor, settings.mode, settings.spectate, placeDuck, chess, selectedSquare, legalMoves, state.turn, makeMove, getLegalMoves]);
 
   // Keep this conditional render after every hook so the component has the
   // same hook order while a player transitions from waiting to matched.
@@ -445,6 +459,7 @@ export default function Game() {
           onSquareClick={handleSquareClick}
           playerColor={boardOrientation}
           effectTargeting={effectTargeting}
+          duckSquare={state.duckSquare}
         />
 
         <PlayerBar
@@ -529,6 +544,27 @@ export default function Game() {
           </div>
         </div>
       )}
+
+      {/* Duck Chess: prompt the current player to place/move the duck */}
+      {duckPending !== null && (() => {
+        const isMyTurn = settings.mode === 'pass-and-play' || settings.mode === 'custom'
+          ? true
+          : duckPending === playerColor;
+        return isMyTurn ? (
+          <div style={{ position: 'fixed', bottom: 16, left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 40 }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #ffae00, #39ff14)',
+              color: '#0d0a1a', padding: '12px 28px', borderRadius: 50,
+              fontFamily: '"Boogaloo", sans-serif', fontSize: '1.1rem', fontWeight: 700,
+              display: 'flex', alignItems: 'center', gap: 10,
+              boxShadow: '0 0 30px rgba(57,255,20,0.45), 0 8px 24px rgba(0,0,0,0.4)',
+              animation: 'bob 1.5s ease-in-out infinite',
+            }}>
+              🦆 Place the duck on any empty square
+            </div>
+          </div>
+        ) : null;
+      })()}
 
       {/* Admin password prompt */}
       {adminPrompt && (
@@ -667,21 +703,37 @@ export default function Game() {
               position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none',
             }}>
               <style>{`
-                @keyframes car-run { from { transform: translateX(-120px) translateY(0); } to { transform: translateX(110vw) translateY(-30px); } }
-                @keyframes king-fly { 0%{transform:rotate(0) translate(0,0);opacity:1} 100%{transform:rotate(720deg) translate(80px,-200px);opacity:0} }
-                @keyframes pawn-to-car { 0%,30%{content:'♟';font-size:2rem} 31%,100%{content:'🚗';font-size:2.5rem} }
-                @keyframes draw-dove { 0%{transform:translateY(0) scale(1)} 50%{transform:translateY(-18px) scale(1.12)} 100%{transform:translateY(0) scale(1)} }
+                @keyframes pawn-run   { from{transform:translateX(-80px)} to{transform:translateX(36vw) scaleX(1.1)} }
+                @keyframes pawn-fade  { 0%{opacity:1} 60%{opacity:1} 100%{opacity:0} }
+                @keyframes car-burst  { from{transform:translateX(32vw) scale(0.4)} to{transform:translateX(115vw) translateY(-28px) scale(1.1)} }
+                @keyframes car-pop    { 0%{opacity:0;transform:translateX(32vw) scale(0.4)} 15%{opacity:1;transform:translateX(35vw) scale(1.3)} 100%{transform:translateX(115vw) translateY(-28px) scale(1.1)} }
+                @keyframes spark-ring { 0%{transform:scale(0);opacity:1} 100%{transform:scale(3);opacity:0} }
+                @keyframes king-fly   { 0%{transform:rotate(0) translate(0,0);opacity:1} 100%{transform:rotate(840deg) translate(50px,-260px);opacity:0} }
               `}</style>
+              {/* Pawn races in and morphs into the car */}
               <span style={{
-                position: 'absolute', top: '42%', left: 0,
-                fontSize: '2.5rem', lineHeight: 1,
-                animation: 'car-run 1.6s cubic-bezier(0.22,1,0.36,1) 0.3s both',
-                filter: 'drop-shadow(0 0 12px #ff9900)',
+                position: 'absolute', top: '41%', left: 0,
+                fontSize: '2.8rem', lineHeight: 1,
+                animation: 'pawn-run 0.52s cubic-bezier(0.22,1,0.36,1) 0.1s both, pawn-fade 0.52s ease-in 0.1s both',
+              }}>♟</span>
+              {/* Spark burst at transform point */}
+              <span style={{
+                position: 'absolute', top: '38%', left: '32vw',
+                fontSize: '2rem',
+                animation: 'spark-ring 0.45s ease-out 0.58s both',
+              }}>✨</span>
+              {/* Car pops out and races off */}
+              <span style={{
+                position: 'absolute', top: '41%', left: 0,
+                fontSize: '3.2rem', lineHeight: 1,
+                animation: 'car-pop 1.0s cubic-bezier(0.22,1,0.36,1) 0.6s both',
+                filter: 'drop-shadow(0 4px 18px #ff9900) drop-shadow(0 0 10px #ffee00)',
               }}>🚗</span>
+              {/* Enemy king gets launched */}
               <span style={{
-                position: 'absolute', top: '38%', left: '45%',
-                fontSize: '2.5rem', lineHeight: 1,
-                animation: 'king-fly 0.8s ease-in 1.4s both',
+                position: 'absolute', top: '37%', left: '50%',
+                fontSize: '2.8rem', lineHeight: 1,
+                animation: 'king-fly 0.65s ease-in 1.4s both',
               }}>{gameOver.result?.includes('White') ? '♚' : '♔'}</span>
             </div>
           )}

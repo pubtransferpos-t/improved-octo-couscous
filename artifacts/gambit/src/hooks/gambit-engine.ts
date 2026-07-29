@@ -268,7 +268,7 @@ export const EFFECTS: Record<EffectType, EffectDef> = {
   car_diagonal: {
     label: 'Car Incoming!', emoji: '🚗',
     description: 'A car targets enemy pieces on a random diagonal. Strikes in 5 turns, then 4, 3, 2, 1 — escalating until it stops. Only enemy pieces are hit (kings are spared).',
-    category: 'nerf', rarity: 'epic', duration: 5, targetRule: 'none',
+    category: 'buff', rarity: 'epic', duration: 5, targetRule: 'none',
   },
   illegal_move: {
     label: 'Illegal Move', emoji: '🚨',
@@ -450,6 +450,8 @@ export interface GambitState {
   rpsScore: Record<Color, number>;
   /** Held abilities (holdable effects waiting in hand) */
   heldAbilities: Record<Color, HeldAbility[]>;
+  /** Duck Chess: current duck square (null = not yet placed) */
+  duckSquare: Square | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

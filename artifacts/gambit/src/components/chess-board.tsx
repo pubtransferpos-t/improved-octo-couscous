@@ -26,6 +26,8 @@ interface ChessBoardProps {
   /** null = both sides playable. Otherwise board is oriented for this color. */
   playerColor: Color | null;
   effectTargeting: { effect: string; by: Color; step: number; selected: Square[] } | null;
+  /** Duck Chess: square currently occupied by the duck */
+  duckSquare?: Square | null;
 }
 
 export default function ChessBoard({
@@ -37,6 +39,7 @@ export default function ChessBoard({
   onSquareClick,
   playerColor,
   effectTargeting,
+  duckSquare,
 }: ChessBoardProps) {
   const board = chess.board();
   const isFlipped = playerColor === 'b';
@@ -224,6 +227,17 @@ export default function ChessBoard({
                     boxSizing: 'border-box', zIndex: 8,
                   }}>
                     <span style={{ fontSize: 'min(3vw, 14px)' }}>🎭</span>
+                  </div>
+                )}
+
+                {/* Duck Chess: duck square */}
+                {duckSquare === sq && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center" style={{
+                    background: 'rgba(255,200,0,0.25)',
+                    border: '2px solid rgba(255,180,0,0.9)',
+                    boxSizing: 'border-box', zIndex: 9,
+                  }}>
+                    <span style={{ fontSize: 'min(4vw, 18px)', lineHeight: 1 }}>🦆</span>
                   </div>
                 )}
 
