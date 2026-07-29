@@ -23,6 +23,9 @@ export interface LobbyRoom {
   status: "waiting" | "playing";
   createdAt: number;
   spectatorCount: number;
+  spinInterval?: number;
+  title?: string;
+  description?: string;
 }
 
 interface LobbyData {
@@ -201,13 +204,18 @@ export class Matchmaker {
 
   private async lobbyRegister(request: Request): Promise<Response> {
     const lobby = this.lobbyData!;
-    const body = await request.json<{ roomId: string; gameMode: string }>();
+    const body = await request.json<{
+      roomId: string; gameMode: string; spinInterval?: number; title?: string; description?: string;
+    }>();
     lobby.rooms[body.roomId] = {
       roomId: body.roomId,
       gameMode: body.gameMode ?? "standard",
       status: "waiting",
       createdAt: Date.now(),
       spectatorCount: 0,
+      spinInterval: body.spinInterval,
+      title: body.title?.slice(0, 60),
+      description: body.description?.slice(0, 200),
     };
     await this.save();
     return json({ ok: true });

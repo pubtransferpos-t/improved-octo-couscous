@@ -60,8 +60,16 @@ export interface RoomState {
   gameMode: GameMode;
   /** Whether this room is listed publicly in the lobby */
   isPublic: boolean;
+  /** Custom match title, set by the host at creation time */
+  title?: string;
+  /** Custom match description, set by the host at creation time */
+  description?: string;
   /** Slowmode: epoch ms of last chat message per color */
   lastChatAt: { white: number; black: number; spectator: number };
+  /** Duck Chess: current duck square, null means not yet placed */
+  duckSquare?: string | null;
+  /** Custom effect pool (comma-separated EffectType names). Empty = all effects allowed. */
+  enabledEffects?: string[];
 }
 
 export interface ActiveEffect {
@@ -125,6 +133,7 @@ export class GameRoom {
       if (method === "POST" && action === "chat") return cors(await this.handleChat(request));
       if (method === "POST" && action === "spectate") return cors(await this.handleSpectate());
       if (method === "POST" && action === "spectate-leave") return cors(await this.handleSpectateLeave());
+      if (method === "POST" && action === "duck") return cors(await this.handleDuck(request));
       return cors(new Response(JSON.stringify({ error: "Not found" }), { status: 404 }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -145,6 +154,10 @@ export class GameRoom {
     const gameMode = (url.searchParams.get("gameMode") ?? "standard") as GameMode;
     const isPublic = url.searchParams.get("isPublic") === "true";
     const initialFen = url.searchParams.get("initialFen") ?? INITIAL_FEN;
+    const enabledEffectsParam = url.searchParams.get("enabledEffects");
+    const enabledEffects = enabledEffectsParam ? enabledEffectsParam.split(",").filter(Boolean) : undefined;
+    const title = (url.searchParams.get("title") ?? "").trim().slice(0, 60) || undefined;
+    const description = (url.searchParams.get("description") ?? "").trim().slice(0, 200) || undefined;
 
     // Validate the initial FEN
     let fen = INITIAL_FEN;
@@ -175,11 +188,14 @@ export class GameRoom {
       spectatorCount: 0,
       gameMode,
       isPublic,
+      title,
+      description,
       lastChatAt: { white: 0, black: 0, spectator: 0 },
+      enabledEffects,
     };
 
     await this.saveRoom(room);
-    return new Response(JSON.stringify({ roomId, gameMode }), {
+    return new Response(JSON.stringify({ roomId, gameMode, title, description }), {
       status: 201, headers: { "Content-Type": "application/json" },
     });
   }
@@ -446,6 +462,21 @@ export class GameRoom {
     room.spectatorCount = Math.max(0, (room.spectatorCount ?? 1) - 1);
     await this.saveRoom(room);
     return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  private async handleDuck(request: Request): Promise<Response> {
+    const room = await this.loadRoom();
+    if (!room) return new Response(JSON.stringify({ error: "Room not found" }), { status: 404 });
+    let body: { square?: string } = {};
+    try { body = await request.json<{ square?: string }>(); } catch { /* ok */ }
+    if (body.square) {
+      room.duckSquare = body.square;
+      room.lastActivity = Date.now();
+      await this.saveRoom(room);
+    }
+    return new Response(JSON.stringify({ ok: true, duckSquare: room.duckSquare }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
 
