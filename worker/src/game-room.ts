@@ -60,6 +60,10 @@ export interface RoomState {
   gameMode: GameMode;
   /** Whether this room is listed publicly in the lobby */
   isPublic: boolean;
+  /** Custom match title, set by the host at creation time */
+  title?: string;
+  /** Custom match description, set by the host at creation time */
+  description?: string;
   /** Slowmode: epoch ms of last chat message per color */
   lastChatAt: { white: number; black: number; spectator: number };
   /** Duck Chess: current duck square, null means not yet placed */
@@ -152,6 +156,8 @@ export class GameRoom {
     const initialFen = url.searchParams.get("initialFen") ?? INITIAL_FEN;
     const enabledEffectsParam = url.searchParams.get("enabledEffects");
     const enabledEffects = enabledEffectsParam ? enabledEffectsParam.split(",").filter(Boolean) : undefined;
+    const title = (url.searchParams.get("title") ?? "").trim().slice(0, 60) || undefined;
+    const description = (url.searchParams.get("description") ?? "").trim().slice(0, 200) || undefined;
 
     // Validate the initial FEN
     let fen = INITIAL_FEN;
@@ -182,12 +188,14 @@ export class GameRoom {
       spectatorCount: 0,
       gameMode,
       isPublic,
+      title,
+      description,
       lastChatAt: { white: 0, black: 0, spectator: 0 },
       enabledEffects,
     };
 
     await this.saveRoom(room);
-    return new Response(JSON.stringify({ roomId, gameMode }), {
+    return new Response(JSON.stringify({ roomId, gameMode, title, description }), {
       status: 201, headers: { "Content-Type": "application/json" },
     });
   }

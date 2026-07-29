@@ -8,6 +8,7 @@ import { useLocation } from 'wouter';
 import { GameSettings, DEFAULT_SETTINGS } from '@/hooks/use-gambit';
 import { EffectType } from '@/hooks/gambit-engine';
 import { getGameSettings } from './home';
+import { getSavedGames, saveGame, removeSavedGame, daysUntilExpiry, SavedGame } from '@/lib/saved-games';
 
 /* ─── Worker proxy base ───────────────────────────────────────────────────── */
 const WORKER_PROXY = '/api/worker-proxy';
@@ -22,6 +23,8 @@ interface LobbyRoom {
   createdAt: number;
   spectatorCount: number;
   spinInterval?: number;
+  title?: string;
+  description?: string;
 }
 
 interface ModeInfo { id: GameMode; label: string; emoji: string; desc: string }
@@ -86,6 +89,8 @@ export default function Lobby() {
   const [loadingRooms, setLoadingRooms] = useState(true);
 
   const [createMode, setCreateMode] = useState(false);
+  const [matchTitle, setMatchTitle] = useState('');
+  const [matchDescription, setMatchDescription] = useState('');
   const [gameMode, setGameMode] = useState<string>('standard');
   const [spinInterval, setSpinInterval] = useState(5);
   const [isPublicRoom, setIsPublicRoom] = useState(true);
@@ -95,6 +100,9 @@ export default function Lobby() {
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState('');
+
+  const [savedGames, setSavedGames] = useState<SavedGame[]>([]);
+  useEffect(() => { setSavedGames(getSavedGames()); }, []);
 
   // ── Load public rooms ─────────────────────────────────────────────────
   const fetchRooms = useCallback(async () => {
@@ -119,12 +127,16 @@ export default function Lobby() {
     setCreateError('');
     try {
       const roomId = generateRoomId();
+      const title = matchTitle.trim().slice(0, 60);
+      const description = matchDescription.trim().slice(0, 200);
       const initialFen = gameMode === 'chess960' ? generateChess960Fen() : undefined;
       const url = new URL(`${WORKER_PROXY}/rooms`);
       url.searchParams.set('roomId', roomId);
       url.searchParams.set('gameMode', gameMode);
       url.searchParams.set('spinInterval', String(spinInterval));
       url.searchParams.set('isPublic', String(isPublicRoom));
+      if (title) url.searchParams.set('title', title);
+      if (description) url.searchParams.set('description', description);
       if (initialFen) url.searchParams.set('initialFen', initialFen);
 
       const r = await fetch(url.toString(), { method: 'POST' });
@@ -135,9 +147,11 @@ export default function Lobby() {
         await fetch(`${WORKER_PROXY}/lobby/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomId, gameMode, spinInterval }),
+          body: JSON.stringify({ roomId, gameMode, spinInterval, title, description }),
         }).catch(() => {});
       }
+
+      saveGame({ roomId, title: title || undefined, description: description || undefined, gameMode, role: 'host' });
 
       // Navigate to game as host (white)
       const baseSettings = getGameSettingsSafe();
@@ -166,10 +180,14 @@ export default function Lobby() {
         guestJoined: boolean;
         spinEligibility?: { white: number; black: number };
         enabledEffects?: string[];
+        title?: string;
+        description?: string;
+        gameMode?: string;
       };
       if (room.guestJoined && room.status === 'playing') {
         throw new Error('Room is full — spectate instead');
       }
+      saveGame({ roomId: code, title: room.title, description: room.description, gameMode: room.gameMode, role: 'guest' });
       const baseSettings = getGameSettingsSafe();
       // Derive spin interval from room state if available
       const roomSpinInterval = room.spinEligibility?.white ?? baseSettings.spinInterval;
@@ -195,13 +213,38 @@ export default function Lobby() {
   };
 
   // ── Spectate ─────────────────────────────────────────────────────────────
-  const handleSpectate = (roomId: string) => {
+  const handleSpectate = async (roomId: string) => {
+    try {
+      const r = await fetch(`${WORKER_PROXY}/rooms/${roomId}/state`);
+      if (r.ok) {
+        const room = await r.json() as { title?: string; description?: string; gameMode?: string };
+        saveGame({ roomId, title: room.title, description: room.description, gameMode: room.gameMode, role: 'spectator' });
+      }
+    } catch { /* still let them spectate even if the save-game lookup fails */ }
     const baseSettings = getGameSettingsSafe();
     const newSettings: GameSettings = {
       ...baseSettings, mode: 'online',
       customRoomId: roomId, spectate: true,
     };
     saveSettingsAndNavigate(newSettings);
+  };
+
+  // ── Resume a saved game ────────────────────────────────────────────────
+  const handleResume = (entry: SavedGame) => {
+    const baseSettings = getGameSettingsSafe();
+    const newSettings: GameSettings = {
+      ...baseSettings, mode: 'online',
+      customRoomId: entry.roomId,
+      spectate: entry.role === 'spectator',
+      playerColor: entry.role === 'guest' ? 'b' : 'w',
+      ...(entry.role === 'guest' ? { customRoomColor: 'b' as const } : {}),
+    };
+    saveSettingsAndNavigate(newSettings);
+  };
+
+  const handleForgetSaved = (roomId: string) => {
+    removeSavedGame(roomId);
+    setSavedGames(getSavedGames());
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -253,7 +296,7 @@ export default function Lobby() {
           <div style={{ display: 'flex', gap: 8 }}>
             <input
               value={joinCode}
-              onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 8))}
+              onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 16))}
               placeholder="Room code…"
               style={{
                 flex: 1, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(191,95,255,0.3)',
@@ -300,6 +343,37 @@ export default function Lobby() {
 
           {createMode && (
             <>
+              {/* Match title / description */}
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ margin: '0 0 6px', color: 'rgba(200,190,255,0.6)', fontSize: '0.85rem' }}>Match title (optional)</p>
+                <input
+                  value={matchTitle}
+                  onChange={e => setMatchTitle(e.target.value.slice(0, 60))}
+                  placeholder="e.g. Friday Night Blitz"
+                  style={{
+                    width: '100%', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(191,95,255,0.3)',
+                    borderRadius: 10, padding: '9px 12px', color: '#f0f0ff',
+                    fontFamily: '"Boogaloo", sans-serif', fontSize: '1rem', outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ margin: '0 0 6px', color: 'rgba(200,190,255,0.6)', fontSize: '0.85rem' }}>Description (optional)</p>
+                <textarea
+                  value={matchDescription}
+                  onChange={e => setMatchDescription(e.target.value.slice(0, 200))}
+                  placeholder="Anything else players should know…"
+                  rows={2}
+                  style={{
+                    width: '100%', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(191,95,255,0.3)',
+                    borderRadius: 10, padding: '9px 12px', color: '#f0f0ff',
+                    fontFamily: '"Boogaloo", sans-serif', fontSize: '0.95rem', outline: 'none',
+                    resize: 'vertical', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
               {/* Game mode selector */}
               <p style={{ margin: '0 0 8px', color: 'rgba(200,190,255,0.6)', fontSize: '0.85rem' }}>Game mode</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
@@ -371,6 +445,75 @@ export default function Lobby() {
           )}
         </div>
 
+        {/* Saved games */}
+        {savedGames.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontFamily: '"Permanent Marker", cursive', fontSize: '1.2rem', margin: '0 0 12px', color: 'rgba(200,190,255,0.8)' }}>
+              Saved Games
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {savedGames.map(entry => (
+                <div key={entry.roomId} style={{
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 14, padding: '12px 14px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{
+                        fontFamily: '"Press Start 2P", monospace', fontSize: '0.5rem',
+                        color: entry.role === 'host' ? '#39ff14' : entry.role === 'guest' ? '#00f5ff' : '#bf5fff',
+                        letterSpacing: '0.06em',
+                      }}>
+                        {entry.role === 'host' ? '♔ HOST' : entry.role === 'guest' ? '♚ GUEST' : '👁 SPECTATOR'}
+                      </span>
+                      <span style={{
+                        fontFamily: '"Press Start 2P", monospace', fontSize: '0.4rem',
+                        color: 'rgba(200,190,255,0.35)',
+                      }}>
+                        {daysUntilExpiry(entry)}d left
+                      </span>
+                    </div>
+                    <div style={{
+                      marginTop: 4, color: '#f0f0ff', fontSize: '0.95rem',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {entry.title || entry.roomId}
+                    </div>
+                    {entry.description && (
+                      <div style={{
+                        marginTop: 2, color: 'rgba(200,190,255,0.5)', fontSize: '0.78rem',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {entry.description}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      onClick={() => handleResume(entry)}
+                      style={{
+                        background: 'rgba(191,95,255,0.15)', border: '1px solid rgba(191,95,255,0.4)',
+                        borderRadius: 8, cursor: 'pointer', color: '#bf5fff',
+                        fontFamily: '"Boogaloo", sans-serif', fontSize: '0.85rem', padding: '6px 12px',
+                      }}
+                    >Resume</button>
+                    <button
+                      onClick={() => handleForgetSaved(entry.roomId)}
+                      title="Remove from saved games"
+                      style={{
+                        background: 'rgba(255,45,120,0.1)', border: '1px solid rgba(255,45,120,0.3)',
+                        borderRadius: 8, cursor: 'pointer', color: '#ff2d78',
+                        fontFamily: '"Boogaloo", sans-serif', fontSize: '0.85rem', padding: '6px 10px',
+                      }}
+                    >✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Public rooms list */}
         <h3 style={{ fontFamily: '"Permanent Marker", cursive', fontSize: '1.2rem', margin: '0 0 12px', color: 'rgba(200,190,255,0.8)' }}>
           Public Rooms
@@ -411,7 +554,11 @@ export default function Lobby() {
                     </span>
                   </div>
                   <div style={{ marginTop: 4, color: 'rgba(200,190,255,0.7)', fontSize: '0.9rem' }}>
-                    {gameModeLabel(room.gameMode)}
+                    {room.title ? (
+                      <strong style={{ color: '#f0f0ff' }}>{room.title}</strong>
+                    ) : (
+                      gameModeLabel(room.gameMode)
+                    )}
                     {room.spinInterval != null && (
                       <span style={{ marginLeft: 8, color: '#ff9900', fontSize: '0.75rem' }}>
                         🎲 /{room.spinInterval}
@@ -423,6 +570,16 @@ export default function Lobby() {
                       </span>
                     )}
                   </div>
+                  {room.title && (
+                    <div style={{ marginTop: 2, color: 'rgba(200,190,255,0.45)', fontSize: '0.75rem' }}>
+                      {gameModeLabel(room.gameMode)}
+                    </div>
+                  )}
+                  {room.description && (
+                    <div style={{ marginTop: 3, color: 'rgba(200,190,255,0.5)', fontSize: '0.8rem', maxWidth: 320 }}>
+                      {room.description}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   {room.status === 'waiting' && (
@@ -472,8 +629,9 @@ function saveSettingsAndNavigate(settings: GameSettings) {
 }
 
 function generateRoomId(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  // 16 random letters + digits — a unique identifier for custom matches.
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let id = '';
-  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 16; i++) id += chars[Math.floor(Math.random() * chars.length)];
   return id;
 }
