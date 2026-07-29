@@ -24,11 +24,18 @@ const DVDS = [
 ];
 
 const MODES = [
-  { id: 'bot'           as const, label: 'vs Computer',  desc: 'AI opponent — set the strength', color: '#ff2d78' },
-  { id: 'pass-and-play' as const, label: 'Same Screen',  desc: 'Two players, one device',        color: '#00f5ff' },
-  { id: 'custom'        as const, label: 'Custom',        desc: 'Hand-pick the modifier pool',    color: '#39ff14' },
-  { id: 'online'        as const, label: 'Online',        desc: 'Play someone over the internet', color: '#bf5fff' },
+  { id: 'bot'           as const, label: 'vs Computer',  desc: 'AI opponent — set the strength',        color: '#ff2d78' },
+  { id: 'pass-and-play' as const, label: 'Same Screen',  desc: 'Two players, one device',               color: '#00f5ff' },
+  { id: 'custom'        as const, label: 'Custom Online', desc: 'Pick your effect pool · play online',  color: '#39ff14' },
+  { id: 'online'        as const, label: 'Online',        desc: 'Play someone over the internet',       color: '#bf5fff' },
 ];
+
+function generateRoomId(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
 
 function eloLabel(elo: number): string {
   if (elo < 400)  return 'Baby';
@@ -134,8 +141,35 @@ export default function Home() {
     });
   }, []);
 
-  const startGame = () => {
-    if (settings.mode === 'online' && !workerOnline) return;
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [roomError, setRoomError] = useState('');
+
+  const startGame = async () => {
+    if ((settings.mode === 'online' || settings.mode === 'custom') && !workerOnline) return;
+
+    if (settings.mode === 'custom') {
+      // Custom Online: create a private worker room with the chosen effect pool
+      setCreatingRoom(true);
+      setRoomError('');
+      try {
+        const roomId = generateRoomId();
+        const url = new URL('/api/worker-proxy/rooms', window.location.origin);
+        url.searchParams.set('roomId', roomId);
+        url.searchParams.set('gameMode', 'standard');
+        url.searchParams.set('spinInterval', String(settings.spinInterval));
+        url.searchParams.set('enabledEffects', settings.enabledEffects.join(','));
+        url.searchParams.set('isPublic', 'false');
+        const r = await fetch(url.toString(), { method: 'POST' });
+        if (!r.ok) throw new Error('Could not create room — is the worker deployed?');
+        _settings = { ...settings, mode: 'online', customRoomId: roomId, playerColor: 'w', spectate: false };
+        setLocation('/game');
+      } catch (e) {
+        setRoomError(e instanceof Error ? e.message : 'Failed to create room');
+        setCreatingRoom(false);
+      }
+      return;
+    }
+
     _settings = settings;
     setLocation('/game');
   };
@@ -407,28 +441,49 @@ export default function Home() {
 
           {/* Play */}
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {roomError && (
+              <p style={{ margin:0, color:'#ff2d78', fontFamily:'"Boogaloo", sans-serif', fontSize:'0.95rem', textAlign:'center' }}>
+                ⚠ {roomError}
+              </p>
+            )}
             <button
-              onClick={startGame}
+              onClick={() => { void startGame(); }}
               onMouseEnter={() => setPlayHovered(true)}
               onMouseLeave={() => setPlayHovered(false)}
-              className={playWiggle ? 'animate-wiggle-btn' : ''}
+              disabled={creatingRoom || (settings.mode === 'online' && workerOnline === false) || (settings.mode === 'custom' && workerOnline === false)}
+              className={playWiggle && !creatingRoom ? 'animate-wiggle-btn' : ''}
               style={{
                 width:'100%', padding:'19px 0',
                 fontFamily:'"Permanent Marker", cursive', fontSize:'2.1rem',
-                background: playHovered
+                background: creatingRoom
+                  ? 'linear-gradient(135deg,#39ff14,#00f5ff)'
+                  : playHovered
                   ? 'linear-gradient(135deg,#ff9900,#ff2d78,#bf5fff)'
                   : 'linear-gradient(135deg,#ff2d78,#ff9900,#ffee00)',
-                color:'#fff', border:'none', borderRadius:18,
-                boxShadow: playHovered
+                color: creatingRoom ? '#0d0a1a' : '#fff',
+                border:'none', borderRadius:18,
+                boxShadow: playHovered && !creatingRoom
                   ? '0 0 44px rgba(255,45,120,0.7), 0 8px 32px rgba(255,45,120,0.4)'
                   : '0 0 20px rgba(255,45,120,0.35), 0 4px 16px rgba(0,0,0,0.4)',
-                transform: playHovered ? 'scale(1.03) translateY(-2px)' : 'scale(1)',
+                transform: playHovered && !creatingRoom ? 'scale(1.03) translateY(-2px)' : 'scale(1)',
                 transition:'all 0.18s cubic-bezier(0.34,1.56,0.64,1)',
                 letterSpacing:'0.05em',
+                opacity: (settings.mode === 'online' || settings.mode === 'custom') && workerOnline === false ? 0.4 : 1,
+                cursor: creatingRoom ? 'wait' : 'pointer',
               }}
             >
-              PLAY
+              {creatingRoom ? 'Creating room…' : 'PLAY'}
             </button>
+            {(settings.mode === 'custom') && workerOnline === false && (
+              <p style={{ margin:0, color:'rgba(200,190,255,0.5)', fontFamily:'"Boogaloo", sans-serif', fontSize:'0.85rem', textAlign:'center' }}>
+                Worker offline — custom online play unavailable
+              </p>
+            )}
+            {settings.mode === 'custom' && workerOnline === true && (
+              <p style={{ margin:0, color:'rgba(57,255,20,0.6)', fontFamily:'"Boogaloo", sans-serif', fontSize:'0.85rem', textAlign:'center' }}>
+                Creates a private online room — share the code with your opponent
+              </p>
+            )}
             {settings.mode === 'online' && workerOnline === true && (
               <button
                 onClick={() => { _settings = settings; setLocation('/lobby'); }}

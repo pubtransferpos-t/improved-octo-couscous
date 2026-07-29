@@ -64,6 +64,8 @@ export interface RoomState {
   lastChatAt: { white: number; black: number; spectator: number };
   /** Duck Chess: current duck square, null means not yet placed */
   duckSquare?: string | null;
+  /** Custom effect pool (comma-separated EffectType names). Empty = all effects allowed. */
+  enabledEffects?: string[];
 }
 
 export interface ActiveEffect {
@@ -148,6 +150,8 @@ export class GameRoom {
     const gameMode = (url.searchParams.get("gameMode") ?? "standard") as GameMode;
     const isPublic = url.searchParams.get("isPublic") === "true";
     const initialFen = url.searchParams.get("initialFen") ?? INITIAL_FEN;
+    const enabledEffectsParam = url.searchParams.get("enabledEffects");
+    const enabledEffects = enabledEffectsParam ? enabledEffectsParam.split(",").filter(Boolean) : undefined;
 
     // Validate the initial FEN
     let fen = INITIAL_FEN;
@@ -179,6 +183,7 @@ export class GameRoom {
       gameMode,
       isPublic,
       lastChatAt: { white: 0, black: 0, spectator: 0 },
+      enabledEffects,
     };
 
     await this.saveRoom(room);

@@ -161,14 +161,31 @@ export default function Lobby() {
     try {
       const r = await fetch(`${WORKER_PROXY}/rooms/${code}/state`);
       if (!r.ok) throw new Error('Room not found');
-      const room = await r.json() as { status: string; guestJoined: boolean };
+      const room = await r.json() as {
+        status: string;
+        guestJoined: boolean;
+        spinEligibility?: { white: number; black: number };
+        enabledEffects?: string[];
+      };
       if (room.guestJoined && room.status === 'playing') {
         throw new Error('Room is full — spectate instead');
       }
       const baseSettings = getGameSettingsSafe();
+      // Derive spin interval from room state if available
+      const roomSpinInterval = room.spinEligibility?.white ?? baseSettings.spinInterval;
+      // Apply the host's custom effect pool so both players use the same modifiers
+      const roomEffects = (room.enabledEffects && room.enabledEffects.length > 0)
+        ? room.enabledEffects as EffectType[]
+        : baseSettings.enabledEffects;
       const newSettings: GameSettings = {
-        ...baseSettings, mode: 'online', spinInterval: baseSettings.spinInterval,
-        playerColor: 'b', customRoomId: code, customRoomColor: 'b', spectate: false,
+        ...baseSettings,
+        mode: 'online',
+        spinInterval: roomSpinInterval,
+        enabledEffects: roomEffects,
+        playerColor: 'b',
+        customRoomId: code,
+        customRoomColor: 'b',
+        spectate: false,
       };
       saveSettingsAndNavigate(newSettings);
     } catch (e) {

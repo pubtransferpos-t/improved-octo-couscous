@@ -63,6 +63,7 @@ interface ServerRoom {
   gameMode?: string;
   winner?: 'white' | 'black';
   duckSquare?: string | null;
+  enabledEffects?: string[];
 }
 
 export type { ChatMsg };
